@@ -9,7 +9,7 @@ if __name__ == "__main__":
     parser.add_argument('--server', action='store_true', help='Start HTTP server', default=False)
     parser.add_argument('--server-only', action='store_true', help='Start only HTTP server without camera', default=False)
     parser.add_argument('--image-dir', type=str, help='image directory', default="~")
-    parser.add_argument('--thumb-width', type=int, help='thumbnail width', default=500)
+    parser.add_argument('--thumb-width', type=int, help='thumbnail width', default=1280)
 
     args = parser.parse_args()
 
@@ -19,3 +19,4 @@ if __name__ == "__main__":
                             server_only=args.server_only,
                             verbose=args.verbose)
     photobooth.preview()
+    photobooth.close()

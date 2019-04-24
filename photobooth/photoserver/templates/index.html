@@ -2,42 +2,18 @@
 
 {% block content %}
 
-<!--
-<div class="container">
-    <div class="row">
-        {% for img in images %}
-        <div class="col-sm-4">
-            <a href="/image/{{ img }}"><img src="/thumb/{{ img }}" /></a>
-        </div>
-        {% endfor %}
-    </div>
-</div>
--->
+<main>
+	<div class="gallery">
+		{% for img in images %}
 
+		<figure>
+			<a href="/image/{{ img }}">
+				<img src="/thumb/{{ img }}" alt="{{ img }}">
+			</a>
+		</figure>
 
-<div class="collage  effect-parent">
-
-    {% for img in images %}
-
-    <div class="Image_Wrapper" data-caption="{{ img }}" style="text-align: center;">
-		<a href="/image/{{ img }}">
-			<img src="/thumb/{{ img }}" alt="{{ img }}">
-		</a>
+		{% endfor %}
 	</div>
-
-    {% endfor %}
-
-</div>
-
-
-<script type="text/javascript">
-$(window).load(function() {
-	$('.collage').removeWhitespace().collagePlus({
-		'effect'          : 'default',
-		'targetHeight'    : 300,
-		'fadeSpeed'       : 500,
-	}).collageCaption();
-});
-</script>
+</main>
 
 {% endblock %}

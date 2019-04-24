@@ -52,6 +52,9 @@ class Photobooth:
             self.server_thread.start()
 
     def __del__(self):
+        self.close()
+
+    def close(self):
         if self.server_thread.is_alive():
             self.log.info("close server...")
             self.server_thread.terminate()
