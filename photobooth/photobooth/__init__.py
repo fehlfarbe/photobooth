@@ -22,16 +22,14 @@ class Photobooth:
 
     def __init__(self, image_dir=".",
                  fullscreen=False,
-                 start_server=False,
-                 server_only=False,
                  verbose=False,
                  thumb_width=500):
         self.image_dir = image_dir
         self.timer_limit = 3
         self.fullscreen = fullscreen
-        self.start_server = start_server
-        self.server_only = server_only
         self.thumb_width = thumb_width
+
+        self.window_title = "preview"
 
         # setup logger
         self.log = logging.getLogger("Photobooth")
@@ -53,7 +51,7 @@ class Photobooth:
     def close(self):
         self.event.set()
         if self.preview_thread is not None:
-            self.preview_thread.terminate()
+            # self.preview_thread.terminate()
             self.preview_thread.join()
         # if self.server_thread.is_alive():
         #     self.log.info("close server...")
@@ -61,35 +59,26 @@ class Photobooth:
         #     self.server_thread.join()
 
     def show_snap(self, img, review_time=2):
-        img_resized = resize(img, width=1280)
+        img_resized = resize(img, width=740)
         white = np.ones(img_resized.shape, dtype=float)
+        cv2.imshow(self.window_title, white)
+        cv2.waitKey(200)
+        cv2.imshow(self.window_title, img)
+        cv2.waitKey(review_time*1000)
         img_float = img_resized.astype(float)
         for i in np.arange(0.0, 1.0, 0.1):
-            self.log.info(i)
-            foreground = cv2.multiply(white * i, img_float)
-            cv2.imshow("preview", foreground/255)
+            cv2.imshow(self.window_title, (img_float*(1.0-i))/255)
             cv2.waitKey(1)
-        cv2.waitKey(review_time*1000)
 
     def _preview(self):
-        # loop if server only
-        if self.server_only:
-            self.log.info("wait:")
-            self.event.wait()
-            self.log.info("after wait")
-            while not self.event.is_set():
-                time.sleep(5.0)
-                continue
-            return 0
-
         # init camera
         camera = self.init_camera()
 
         # open window
         if self.fullscreen:
             self.log.debug("Open fullscreen window")
-            cv2.namedWindow("preview", cv2.WINDOW_NORMAL)
-            cv2.setWindowProperty("preview", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.namedWindow(self.window_title, cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(self.window_title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         else:
             self.log.debug("Open window")
 
@@ -101,6 +90,7 @@ class Photobooth:
             trigger = False
             last_snap = None
             i = 0
+            self.event.clear()
             while not self.event.is_set():
                 # show last snap
                 if last_snap is not None:
@@ -123,11 +113,12 @@ class Photobooth:
                     text = "{:d}".format(int(time_left))
                     textsize = cv2.getTextSize(text, font, 1, 2)[0]
                     # get coords based on boundary
+                    self.log.info(cv2.getTextSize(text, font, 1, 2))
                     textX = int((width / 2 - textsize[0] / 2))
                     textY = int((height / 2 + textsize[1] / 2))
                     cv2.putText(img, text, (textX, textY), font, 20, (255, 255, 255), 10, cv2.LINE_AA)
                 # display image
-                cv2.imshow("preview", img)
+                cv2.imshow(self.window_title, img)
                 k = cv2.waitKey(1)
                 if k == 27:
                     break
@@ -159,7 +150,7 @@ class Photobooth:
 
     def init_camera(self):
         self.log.debug("init camera")
-        vs = VideoStream(usePiCamera=True, resolution=(1920, 1080)).start()
+        vs = VideoStream(usePiCamera=True, resolution=(1920, 1088)).start()
         time.sleep(2.0)
         return vs
 
@@ -168,7 +159,8 @@ class Photobooth:
         camera.stop()
 
     def take_preview_image(self, camera):
-        return camera.read()
+        img = camera.read()
+        return resize(img, width=1280)
 
     def take_photo(self, camera, path):
         img = camera.read()

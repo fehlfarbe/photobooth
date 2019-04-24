@@ -16,7 +16,7 @@ class Camera(Enum):
 def run_server(image_dir):
     from photobooth.photoserver import app
     app.config["IMAGE_DIR"] = image_dir
-    app.run("0.0.0.0", debug=True, threaded=True)
+    app.run("0.0.0.0", debug=False, threaded=True)
 
 
 if __name__ == "__main__":
@@ -32,21 +32,30 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # set Photobooth class
     if args.camera == Camera.gphoto2:
         Photobooth = GPhotobooth
 
-    pb = Photobooth(image_dir=args.image_dir,
-                    fullscreen=args.fullscreen,
-                    start_server=args.server,
-                    server_only=args.server_only,
-                    thumb_width=args.thumb_width,
-                    verbose=args.verbose)
-    pb.preview(block=not args.server)
+    # create booth if not server only
+    if not args.server_only:
+        pb = Photobooth(image_dir=args.image_dir,
+                        fullscreen=args.fullscreen,
+                        thumb_width=args.thumb_width,
+                        verbose=args.verbose)
+        pb.preview(block=not args.server)
 
     # start server
     if args.server:
+        from flask_script import Manager
+        print("start server")
+        # from photobooth.photoserver.gunicorn_server import GunicornServer2
+        from photobooth.photoserver import app
+        # server = GunicornServer2(host="0.0.0.0", port=5000)
+        # # server(app, server.host, server.port, server.workers)
+        # manager = Manager(app)
+        # manager.add_command("gunicorn", server)
         run_server(args.image_dir)
-        # server_thread = Process(target=run_server, args=(args.image_dir,))
-        # server_thread.start()
 
-    pb.close()
+    # cleanup
+    if not args.server_only:
+        pb.close()
