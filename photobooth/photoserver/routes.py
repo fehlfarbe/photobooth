@@ -8,14 +8,14 @@ import glob
 @app.route('/index')
 def index():
     images = []
-    app.logger.info(app.config["IMAGE_DIR"])
+    # app.logger.info(app.config["IMAGE_DIR"])
     if os.path.exists(app.config["IMAGE_DIR"]):
         types = ("*.gif", "*.jpg", "*.jpeg")
         for t in types:
             for img in glob.glob(os.path.join(app.config["IMAGE_DIR"], "thumbs", t)):
                 images.append(os.path.basename(img))
-    images = sorted(images)
-    app.logger.info(images)
+    images = sorted(images, reverse=True)
+    # app.logger.info(images)
     return render_template('index.html', images=images)
 
 

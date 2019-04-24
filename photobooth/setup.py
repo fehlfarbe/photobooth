@@ -6,6 +6,7 @@ setup(name='photobooth',
                         'pillow',
                         'numpy',
                         'opencv-contrib-python',
+                        'imutils',
                         'flask'
                         ]
       )
