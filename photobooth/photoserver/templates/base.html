@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <title>Photobooth</title>
 
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/bootstrap.min.css') }}"
-          integrity="sha384-Zug+QiDoJOrZ5t4lssLdxGhVrurbmBWopoEl+M6BdEfwnCJZtKxi1KgxUyJq13dy" crossorigin="anonymous">
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/bootstrap.css') }}" />
 
-    <script src="{{ url_for('static', filename='js/bootstrap.min.js') }}"
-            integrity="sha384-a5N7Y/aK3qNeh15eJKGWxsqtnX/wWdSZSKp+81YjTmS15nvnvxKHuzaWwXHDli+4"
-            crossorigin="anonymous">
-    </script>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/main.css') }}" />
+
+    <script src="{{ url_for('static', filename='js/jquery-1.12.4.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bootstrap.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/jquery.removeWhitespace.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/jquery.collageCaption.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/jquery.collagePlus.min.js') }}"></script>
 </head>
 <body>
 {% block content %}{% endblock %}

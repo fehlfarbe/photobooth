@@ -12,13 +12,19 @@ def index():
     if os.path.exists(app.config["IMAGE_DIR"]):
         types = ("*.gif", "*.jpg", "*.jpeg")
         for t in types:
-            for img in glob.glob(os.path.join(app.config["IMAGE_DIR"], t)):
+            for img in glob.glob(os.path.join(app.config["IMAGE_DIR"], "thumbs", t)):
                 images.append(os.path.basename(img))
+    images = sorted(images)
     app.logger.info(images)
     return render_template('index.html', images=images)
 
 
 @app.route('/image/<path:path>')
-def send_js(path):
-    return send_from_directory(app.config["IMAGE_DIR"], path)
+def send_image(path):
+    return send_from_directory(os.path.join(app.config["IMAGE_DIR"], "images"), path)
+
+
+@app.route('/thumb/<path:path>')
+def send_thumb(path):
+    return send_from_directory(os.path.join(app.config["IMAGE_DIR"], "thumbs"), path)
 

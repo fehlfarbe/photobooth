@@ -21,15 +21,19 @@ logging.basicConfig(
 
 class Photobooth:
 
-    def __init__(self, image_dir="/home/kolbe/", fullscreen=False, start_server=False, server_only=False, verbose=False):
+    def __init__(self, image_dir=".",
+                 fullscreen=False,
+                 start_server=False,
+                 server_only=False,
+                 verbose=False,
+                 thumb_width=500):
         self.image_dir = image_dir
         self.timer_limit = 3
         self.fullscreen = fullscreen
         self.start_server = start_server
         self.server_only = server_only
         self.server_thread = None
-
-        # logger
+        self.thumb_width = thumb_width
 
         # setup logger
         self.log = logging.getLogger("Photobooth")
@@ -136,24 +140,63 @@ class Photobooth:
                 k = cv2.waitKey(1)
                 if k == 27:
                     break
-                if k == 32 or trigger:  # SPACE = direct photo
-                    self.log.info("Capturing image")
-                    file_path = gp.check_result(gp.gp_camera_capture(
-                        camera, gp.GP_CAPTURE_IMAGE))
-                    self.log.info("Camera file path: {0}/{1}".format(file_path.folder, file_path.name))
-                    target = os.path.join(self.image_dir, file_path.name)
-                    self.log.info("Copying image to {}".format(target))
-                    camera_file = gp.check_result(gp.gp_camera_file_get(
-                        camera, file_path.folder, file_path.name, gp.GP_FILE_TYPE_NORMAL))
-                    gp.check_result(gp.gp_file_save(camera_file, target))
-                    self.log.warning("ToDo: make thumbnail?")
+                elif k == 32 or trigger:  # SPACE = direct photo
+                    self.take_photo(camera, self.path_images)
 
                     # reset trigger and timer
                     trigger = timer_active = False
-                if k == 97:  # a - photo after 3 seconds
+                elif k == 97:  # a - photo after 3 seconds
                     t0 = time.time()
                     timer_active = True
 
                 i += 1
             gp.check_result(gp.gp_camera_exit(camera))
         return 0
+
+    def take_photo(self, camera, path):
+        self.log.info("Capturing image")
+        file_path = gp.check_result(gp.gp_camera_capture(
+            camera, gp.GP_CAPTURE_IMAGE))
+        self.log.info("Camera file path: {0}/{1}".format(file_path.folder, file_path.name))
+        target = os.path.join(path, self.get_image_name())
+        self.log.info("Copying image to {}".format(target))
+        camera_file = gp.check_result(gp.gp_camera_file_get(
+            camera, file_path.folder, file_path.name, gp.GP_FILE_TYPE_NORMAL))
+        gp.check_result(gp.gp_file_save(camera_file, target))
+        self.log.warning("ToDo: make thumbnail?")
+        Process(target=self.create_thumb, args=(target,)).start()
+
+    def get_image_name(self):
+        return "{}.jpg".format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+
+    @property
+    def path_images(self):
+        path = os.path.join(self.image_dir, "images")
+        if not os.path.exists(path):
+            os.mkdir(path)
+        return path
+
+    @property
+    def path_thumbs(self):
+        path = os.path.join(self.image_dir, "thumbs")
+        if not os.path.exists(path):
+            os.mkdir(path)
+        return path
+
+    def create_thumb(self, path):
+        self.log.info("creating thumbnail for {}".format(path))
+        basename = os.path.basename(path)
+        img = cv2.imread(path)
+
+        if img.shape[1] < self.thumb_width:
+            cv2.imwrite(img, os.path.join(self.path_thumbs, basename))
+            return
+        factor = self.thumb_width / float(img.shape[1])
+        resized = cv2.resize(img, None, fx=factor, fy=factor)
+
+        thumbnail_path = os.path.join(self.path_thumbs, basename)
+        self.log.info("save thumbail to {}".format(thumbnail_path))
+        cv2.imwrite(thumbnail_path, resized)
+
+    def create_gif(self, path):
+        self.log.info("TODO: create GIF")
