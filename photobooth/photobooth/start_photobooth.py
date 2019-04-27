@@ -1,7 +1,7 @@
 import argparse
 from enum import Enum
 from multiprocessing import Process
-from photobooth.photobooth import Photobooth, GPhotobooth
+from photobooth.photobooth import Photobooth, GPhotobooth, Raspibooth
 
 
 class Camera(Enum):
@@ -13,12 +13,6 @@ class Camera(Enum):
         return self.value
 
 
-def run_server(image_dir):
-    from photobooth.photoserver import app
-    app.config["IMAGE_DIR"] = image_dir
-    app.run("0.0.0.0", debug=False, threaded=True)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='')
@@ -28,33 +22,37 @@ if __name__ == "__main__":
     parser.add_argument('--server-only', action='store_true', help='Start only HTTP server without camera', default=False)
     parser.add_argument('--image-dir', type=str, help='image directory', default="~")
     parser.add_argument('--thumb-width', type=int, help='thumbnail width', default=1280)
+    parser.add_argument('--preview-width', type=int, help='preview width', default=1280)
     parser.add_argument('--camera', type=Camera, choices=list(Camera), help='What camera interface?', default=Camera.gphoto2)
+    parser.add_argument('--review-time', type=int, help='review time for snapshot in seconds', default=2)
+
 
     args = parser.parse_args()
 
     # set Photobooth class
     if args.camera == Camera.gphoto2:
         Photobooth = GPhotobooth
+    elif args.camera == Camera.raspicam:
+        Photobooth = Raspibooth
 
     # create booth if not server only
     if not args.server_only:
         pb = Photobooth(image_dir=args.image_dir,
                         fullscreen=args.fullscreen,
                         thumb_width=args.thumb_width,
+                        preview_width=args.preview_width,
+                        review_time=args.review_time,
                         verbose=args.verbose)
         pb.preview(block=not args.server)
 
     # start server
     if args.server:
-        from flask_script import Manager
         print("start server")
-        # from photobooth.photoserver.gunicorn_server import GunicornServer2
+        from gevent.pywsgi import WSGIServer
         from photobooth.photoserver import app
-        # server = GunicornServer2(host="0.0.0.0", port=5000)
-        # # server(app, server.host, server.port, server.workers)
-        # manager = Manager(app)
-        # manager.add_command("gunicorn", server)
-        run_server(args.image_dir)
+        app.config["IMAGE_DIR"] = args.image_dir
+        http_server = WSGIServer(('127.0.0.1', 5000), app)
+        http_server.serve_forever()
 
     # cleanup
     if not args.server_only:

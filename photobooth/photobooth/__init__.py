@@ -6,6 +6,7 @@ import datetime
 from imutils.video import VideoStream
 from imutils import resize
 
+
 from threading import Thread, Event
 from multiprocessing import Process
 
@@ -23,11 +24,15 @@ class Photobooth:
     def __init__(self, image_dir=".",
                  fullscreen=False,
                  verbose=False,
-                 thumb_width=500):
+                 thumb_width=500,
+                 preview_width=1280,
+                 review_time=2):
         self.image_dir = image_dir
         self.timer_limit = 3
         self.fullscreen = fullscreen
         self.thumb_width = thumb_width
+        self.preview_width = preview_width
+        self.review_time = review_time
 
         self.window_title = "preview"
 
@@ -59,11 +64,11 @@ class Photobooth:
         #     self.server_thread.join()
 
     def show_snap(self, img, review_time=2):
-        img_resized = resize(img, width=740)
+        img_resized = resize(img, width=self.preview_width)
         white = np.ones(img_resized.shape, dtype=float)
         cv2.imshow(self.window_title, white)
         cv2.waitKey(200)
-        cv2.imshow(self.window_title, img)
+        cv2.imshow(self.window_title, img_resized)
         cv2.waitKey(review_time*1000)
         img_float = img_resized.astype(float)
         for i in np.arange(0.0, 1.0, 0.1):
@@ -94,7 +99,7 @@ class Photobooth:
             while not self.event.is_set():
                 # show last snap
                 if last_snap is not None:
-                    self.show_snap(last_snap)
+                    self.show_snap(last_snap, review_time=self.review_time)
                     last_snap = None
                 # self.log.debug('Capturing preview image {:06d}'.format(i))
                 img = self.take_preview_image(camera)
@@ -109,14 +114,16 @@ class Photobooth:
                     if time_left <= 0:
                         time_left = 0
                         trigger = True
-                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font = cv2.FONT_HERSHEY_PLAIN
+                    font_scale = 30
+                    thickness = 20
                     text = "{:d}".format(int(time_left))
-                    textsize = cv2.getTextSize(text, font, 1, 2)[0]
+                    # textsize = cv2.getTextSize(text, font, 1, 2)[0]
+                    line_width, line_height = cv2.getTextSize(text, font, font_scale, thickness)[0]
                     # get coords based on boundary
-                    self.log.info(cv2.getTextSize(text, font, 1, 2))
-                    textX = int((width / 2 - textsize[0] / 2))
-                    textY = int((height / 2 + textsize[1] / 2))
-                    cv2.putText(img, text, (textX, textY), font, 20, (255, 255, 255), 10, cv2.LINE_AA)
+                    x = (width - line_width) // 2
+                    y = (height + line_height) // 2
+                    cv2.putText(img, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
                 # display image
                 cv2.imshow(self.window_title, img)
                 k = cv2.waitKey(1)
@@ -150,7 +157,8 @@ class Photobooth:
 
     def init_camera(self):
         self.log.debug("init camera")
-        vs = VideoStream(usePiCamera=True, resolution=(1920, 1088)).start()
+        vs = VideoStream(resolution=(1920, 1080))
+        vs.start()
         time.sleep(2.0)
         return vs
 
@@ -160,7 +168,7 @@ class Photobooth:
 
     def take_preview_image(self, camera):
         img = camera.read()
-        return resize(img, width=1280)
+        return resize(img, width=self.preview_width)
 
     def take_photo(self, camera, path):
         img = camera.read()
@@ -204,6 +212,30 @@ class Photobooth:
         self.log.info("TODO: create GIF")
 
 
+class Raspibooth(Photobooth):
+
+    def init_camera(self):
+        self.log.debug("init camera")
+        vs = VideoStream(usePiCamera=True, resolution=(1920, 1088))
+        vs.start()
+        time.sleep(2.0)
+        return vs
+
+    def close_camera(self, camera):
+        self.log.debug("close camera")
+        camera.stop()
+
+    def take_preview_image(self, camera):
+        img = camera.read()
+        return resize(img, width=self.preview_width)
+
+    def take_photo(self, camera, path):
+        img = camera.read()
+        target = os.path.join(path, self.get_image_name())
+        cv2.imwrite(target, img)
+        return target
+
+
 class GPhotobooth(Photobooth):
 
     def init_camera(self):
@@ -245,7 +277,7 @@ class GPhotobooth(Photobooth):
         file_data = gp.check_result(gp.gp_file_get_data_and_size(camera_file))
         # decode image
         img = cv2.imdecode(np.fromstring(io.BytesIO(file_data).read(), np.uint8), 1)
-        return img
+        return resize(img, width=self.preview_width)
 
     def take_photo(self, camera, path):
         self.log.info("Capturing image")

@@ -7,6 +7,7 @@ setup(name='photobooth',
                         'numpy',
                         'opencv-contrib-python',
                         'imutils',
-                        'flask'
+                        'flask',
+                        'gevent'
                         ]
       )
