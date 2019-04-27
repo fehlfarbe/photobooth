@@ -1,0 +1,12 @@
+Photobooth
+==========
+
+ToDo:
+-----
+
+* dynamic load of images while scrolling on webpage
+* admin menu to delete/download images/directory
+* multiple input solutions for snapshot (GPIO, keyboard, UDP, ...)
+* GIF mode
+* printer
+* housing
