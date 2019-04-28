@@ -5,18 +5,138 @@ import time
 import datetime
 from imutils.video import VideoStream
 from imutils import resize
-
-
+from enum import Enum
 from threading import Thread, Event
 from multiprocessing import Process
-
 import numpy as np
 import cv2
 import gphoto2 as gp
+import pygame
 
 
 logging.basicConfig(
-    format='%(levelname)s: %(name)s: %(message)s', level=logging.INFO)
+    format='%(levelname)s: %(name)s: %(message)s', level=logging.DEBUG)
+
+
+class Camera(Enum):
+    raspicam = "raspicam"
+    v4l2 = "v4l2"
+    gphoto2 = "gphoto2"
+
+    def __str__(self):
+        return self.value
+
+
+class Action(Enum):
+    none = None
+    exit = "exit"
+    photo = "photo"
+    interval = "interval"
+    gif = "gif"
+    print_last_photo = "print_last_photo"
+
+
+class Input:
+
+    def __init__(self):
+        # setup logger
+        self.log = logging.getLogger(self.__class__.__name__)
+        # self.last_action = Action.none
+        # self.event = Event()
+    #     self.thread = Thread(target=self._update_thread)
+    #     self.thread.start()
+    #
+    # def _update_thread(self):
+    #     while not self.event.is_set():
+    #         self._update()
+    #
+    # def _update(self):
+    #     raise NotImplementedError
+
+    def close(self):
+        pass
+
+    def get_action(self):
+        raise NotImplementedError
+        # action = self.last_action
+        # self.last_action = Action.none
+        # return action
+
+
+class KeyboardInput(Input):
+
+    def __init__(self, keymap=None):
+        super(KeyboardInput, self).__init__()
+        if keymap is None:
+            self.keymap = {pygame.K_a: Action.interval,
+                           pygame.K_SPACE: Action.photo,
+                           pygame.K_ESCAPE: Action.exit,
+                           pygame.K_g: Action.gif,
+                           pygame.K_p: Action.print_last_photo}
+        else:
+            self.keymap = keymap
+
+    def get_action(self):
+        try:
+            events = pygame.event.get()
+            # loop events
+            for event in events:
+                if event.type == pygame.KEYDOWN:
+                    self.log.debug(event.key)
+                    self.log.debug(event)
+                    self.log.debug(self.keymap)
+                    if event.key in self.keymap.keys():
+                        return self.keymap[event.key]
+        except pygame.error as e:
+            self.log.error(e)
+
+        return Action.none
+
+
+class GPIOInput(Input):
+
+    def __init__(self, pinmap=None, mode=0):
+        super(GPIOInput, self).__init__()
+        import RPi.GPIO as GPIO
+        mode = GPIO.BCM
+        GPIO.setmode(mode)
+        if pinmap is None:
+
+            self.pinmap = {21: Action.photo,
+                           20: Action.interval,
+                           26: Action.gif,
+                           16: Action.print_last_photo}
+        else:
+            self.pinmap = pinmap
+
+        self.last_action = Action.none
+        self.setup()
+
+    def setup(self):
+        import RPi.GPIO as GPIO
+
+        GPIO.setmode(GPIO.BCM)
+        for k in self.pinmap.keys():
+            GPIO.setup(k, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.add_event_detect(k, GPIO.FALLING, bouncetime=100, callback=self.callback)
+
+    def callback(self, channel):
+        if channel in self.pinmap.keys():
+            self.last_action = self.pinmap[channel]
+
+    def get_action(self):
+        # import RPi.GPIO as GPIO
+        # for k in self.pinmap.keys():
+        #     if GPIO.event_detected(k):
+        #         self.log.debug("Pressed GPIO: {} for {}".format(k, self.pinmap[k]))
+        #         return self.pinmap[k]
+        action = self.last_action
+        self.last_action = Action.none
+        return action
+
+    def close(self):
+        import RPi.GPIO as GPIO
+        GPIO.cleanup()
 
 
 class Photobooth:
@@ -25,20 +145,30 @@ class Photobooth:
                  fullscreen=False,
                  verbose=False,
                  thumb_width=500,
-                 preview_width=1280,
-                 review_time=2):
+                 review_time=2,
+                 input_handler=None,
+                 server=True):
         self.image_dir = image_dir
         self.timer_limit = 3
         self.fullscreen = fullscreen
         self.thumb_width = thumb_width
-        self.preview_width = preview_width
         self.review_time = review_time
-
-        self.window_title = "preview"
+        if input_handler is None:
+            input_handler = [KeyboardInput()]
+            try:
+                input_handler.append(GPIOInput())
+            except Exception as e:
+                print(e)
+                pass
+        self.input_handler = input_handler
+        self.start_server = server
 
         # setup logger
         self.log = logging.getLogger("Photobooth")
         self.log.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+        # pygame window
+        self.screen = None
 
         # threading
         self.event = Event()
@@ -46,46 +176,73 @@ class Photobooth:
         self.preview_thread = None
 
         # start HTTP server
-        # if self.start_server:
-        #     self.server_thread = Process(target=run_server, args=(self.image_dir,))
-        #     self.server_thread.start()
+        if self.start_server:
+            self.server_thread = Thread(target=self.run_server, daemon=True)
+            self.server_thread.start()
 
     def __del__(self):
         self.close()
+
+    def run_server(self):
+        self.log.info("start server")
+        from gevent.pywsgi import WSGIServer
+        from photobooth.photoserver import app
+        app.config["IMAGE_DIR"] = self.image_dir
+        http_server = WSGIServer(('127.0.0.1', 5000), app)
+        http_server.serve_forever()
 
     def close(self):
         self.event.set()
         if self.preview_thread is not None:
             # self.preview_thread.terminate()
             self.preview_thread.join()
-        # if self.server_thread.is_alive():
-        #     self.log.info("close server...")
-        #     self.server_thread.terminate()
-        #     self.server_thread.join()
+        for handler in self.input_handler:
+            handler.close()
+
+    def update_window(self, frame):
+        if frame.shape[1] > self.preview_width:
+            frame = resize(frame, width=self.preview_width)
+        if frame.dtype != np.uint8:
+            frame = frame.astype(np.uint8)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = np.rot90(frame)
+        frame = pygame.surfarray.make_surface(frame)
+        frame = pygame.transform.flip(frame, True, False)
+        self.screen.blit(frame, (0, 0))
+        pygame.display.update()
 
     def show_snap(self, img, review_time=2):
         img_resized = resize(img, width=self.preview_width)
-        white = np.ones(img_resized.shape, dtype=float)
-        cv2.imshow(self.window_title, white)
-        cv2.waitKey(200)
-        cv2.imshow(self.window_title, img_resized)
-        cv2.waitKey(review_time*1000)
-        img_float = img_resized.astype(float)
-        for i in np.arange(0.0, 1.0, 0.1):
-            cv2.imshow(self.window_title, (img_float*(1.0-i))/255)
-            cv2.waitKey(1)
+
+        # show flash
+        white = np.ones(img_resized.shape, dtype=np.uint8) * 255
+        self.update_window(white)
+        time.sleep(0.2)
+
+        # show snapshot
+        self.update_window(img_resized)
+        time.sleep(review_time)
+
+        # blur image
+        for i in np.arange(1, 51, 4):
+            frame = cv2.blur(img_resized, (i, i))
+            self.update_window(frame)
+            time.sleep(0.05)
 
     def _preview(self):
         # init camera
         camera = self.init_camera()
 
-        # open window
+        # setup window
+        flags = 0
         if self.fullscreen:
-            self.log.debug("Open fullscreen window")
-            cv2.namedWindow(self.window_title, cv2.WINDOW_NORMAL)
-            cv2.setWindowProperty(self.window_title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        else:
-            self.log.debug("Open window")
+            flags = pygame.FULLSCREEN
+            flags |= pygame.HWSURFACE
+        flags |= pygame.DOUBLEBUF
+        flags |= pygame.SRCALPHA
+        pygame.init()
+        pygame.display.set_caption("Photobooth")
+        self.screen = pygame.display.set_mode((0, 0), flags, 32)
 
         # start preview
         if camera is not None:
@@ -125,11 +282,15 @@ class Photobooth:
                     y = (height + line_height) // 2
                     cv2.putText(img, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
                 # display image
-                cv2.imshow(self.window_title, img)
-                k = cv2.waitKey(1)
-                if k == 27:
+                # cv2.imshow(self.window_title, img)
+                self.update_window(img)
+                # k = cv2.waitKey(1)
+                action = self.get_action()
+                if action is not Action.none:
+                    self.log.info("ACTION: {}".format(action))
+                if action == Action.exit:
                     break
-                elif k == 32 or trigger:  # SPACE = direct photo
+                elif action == Action.photo or trigger:  # SPACE = direct photo
                     # take photo
                     target = self.take_photo(camera, self.path_images)
                     # create thumbnail in new process
@@ -138,15 +299,31 @@ class Photobooth:
                     trigger = timer_active = False
                     # load last snap
                     last_snap = cv2.imread(target)
-                elif k == 97:  # a - photo after 3 seconds
+                elif action == Action.interval:  # a - photo after 3 seconds
                     t0 = time.time()
                     timer_active = True
-
+                elif action == Action.gif:
+                    self.log.warning("ToDo: GIF is not implemented")
+                elif action == Action.print_last_photo:
+                    self.log.warning("ToDo: printing last photo is not implemented")
                 i += 1
             # cleanup
+            self.log.info("cleanup")
             self.close_camera(camera)
-            cv2.destroyAllWindows()
+            pygame.quit()
         return 0
+
+    @property
+    def preview_width(self):
+        w, h = self.screen.get_size()
+        return w
+
+    def get_action(self):
+        for handler in self.input_handler:
+            action = handler.get_action()
+            if action is not Action.none:
+                return action
+        return Action.none
 
     def preview(self, block=True):
         if block:
