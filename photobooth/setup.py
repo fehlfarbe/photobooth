@@ -9,5 +9,7 @@ setup(name='photobooth',
                         'imutils',
                         'flask',
                         'gevent',
+                        'pygame',
+                        'imageio'
                         ]
       )

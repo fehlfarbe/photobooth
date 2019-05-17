@@ -3,8 +3,9 @@ import logging
 import os
 import time
 import datetime
-from imutils.video import VideoStream
+from imutils.video import VideoStream, FPS
 from imutils import resize
+from photobooth.photobooth.tools import GIFCreator
 from enum import Enum
 from threading import Thread, Event
 from multiprocessing import Process
@@ -104,7 +105,7 @@ class GPIOInput(Input):
 
             self.pinmap = {21: Action.photo,
                            20: Action.interval,
-                           26: Action.gif,
+                           19: Action.gif,
                            16: Action.print_last_photo}
         else:
             self.pinmap = pinmap
@@ -146,6 +147,8 @@ class Photobooth:
                  verbose=False,
                  thumb_width=500,
                  review_time=2,
+                 gif_length=5,
+                 gif_pause=1.0,
                  input_handler=None,
                  server=True):
         self.image_dir = image_dir
@@ -153,6 +156,8 @@ class Photobooth:
         self.fullscreen = fullscreen
         self.thumb_width = thumb_width
         self.review_time = review_time
+        self.gif_length = gif_length
+        self.gif_pause = gif_pause
         if input_handler is None:
             input_handler = [KeyboardInput()]
             try:
@@ -229,6 +234,14 @@ class Photobooth:
             self.update_window(frame)
             time.sleep(0.05)
 
+    def show_gif(self, buffer, pause=0.3, repeat=5):
+        for i in range(repeat):
+            for img in buffer.images:
+                y, x, c = img.shape
+                img = cv2.rectangle(img.copy(), (0, 0), (x, y), (0, 255, 0), 10)
+                self.update_window(img)
+                time.sleep(pause)
+
     def _preview(self):
         # init camera
         camera = self.init_camera()
@@ -251,7 +264,12 @@ class Photobooth:
             timer_active = False
             trigger = False
             last_snap = None
+            # gif
+            gif_buffer = None
+            # counter, fps
             i = 0
+            fps = FPS().start()
+            # setup thread stop event
             self.event.clear()
             while not self.event.is_set():
                 # show last snap
@@ -260,6 +278,7 @@ class Photobooth:
                     last_snap = None
                 # self.log.debug('Capturing preview image {:06d}'.format(i))
                 img = self.take_preview_image(camera)
+                img_preview = img.copy()
                 if img is None:
                     self.log.error("Got None image for preview...exit")
                     self.event.set()
@@ -272,7 +291,7 @@ class Photobooth:
                         time_left = 0
                         trigger = True
                     font = cv2.FONT_HERSHEY_PLAIN
-                    font_scale = 30
+                    font_scale = 50 - 30 * (time_left - int(time_left))
                     thickness = 20
                     text = "{:d}".format(int(time_left))
                     # textsize = cv2.getTextSize(text, font, 1, 2)[0]
@@ -280,14 +299,21 @@ class Photobooth:
                     # get coords based on boundary
                     x = (width - line_width) // 2
                     y = (height + line_height) // 2
-                    cv2.putText(img, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                    cv2.putText(img_preview, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                elif gif_buffer is not None:
+                    y, x, c = img_preview.shape
+                    cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
+
                 # display image
-                # cv2.imshow(self.window_title, img)
-                self.update_window(img)
-                # k = cv2.waitKey(1)
+                self.update_window(img_preview)
+
+                # get action
                 action = self.get_action()
+
                 if action is not Action.none:
                     self.log.info("ACTION: {}".format(action))
+                    # reset GIF buffer
+                    gif_buffer = None
                 if action == Action.exit:
                     break
                 elif action == Action.photo or trigger:  # SPACE = direct photo
@@ -303,10 +329,24 @@ class Photobooth:
                     t0 = time.time()
                     timer_active = True
                 elif action == Action.gif:
-                    self.log.warning("ToDo: GIF is not implemented")
+                    self.log.info("Start GIF")
+                    gif_buffer = GIFCreator(size=self.gif_length, pause=self.gif_pause)
                 elif action == Action.print_last_photo:
                     self.log.warning("ToDo: printing last photo is not implemented")
+                elif gif_buffer is not None:
+                    gif_buffer.update(img)
+                    if gif_buffer.is_full():
+                        file_path = os.path.join(self.path_images, self.get_image_name("gif"))
+                        self.log.info("GIF buffer full, save GIF to {}".format(file_path))
+                        gif_buffer.save_to(file_path)
+                        self.log.info("Play GIF")
+                        self.show_gif(gif_buffer)
+                        gif_buffer = None
+
                 i += 1
+                fps.update()
+                fps.stop()
+                self.log.debug("FPS: {}".format(fps.fps()))
             # cleanup
             self.log.info("cleanup")
             self.close_camera(camera)
@@ -353,8 +393,8 @@ class Photobooth:
         cv2.imwrite(target, img)
         return target
 
-    def get_image_name(self):
-        return "{}.jpg".format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    def get_image_name(self, file_type="jpg"):
+        return "{}.{}".format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), file_type)
 
     @property
     def path_images(self):
@@ -385,31 +425,56 @@ class Photobooth:
         self.log.info("save thumbail to {}".format(thumbnail_path))
         cv2.imwrite(thumbnail_path, resized)
 
-    def create_gif(self, path):
-        self.log.info("TODO: create GIF")
-
 
 class Raspibooth(Photobooth):
 
+    def __init__(self, *args, **kwargs):
+        super(Raspibooth, self).__init__(*args, **kwargs)
+        self.rawCapture = None
+        self.cap = None
+        self.img = None
+        self.run_camera = Event()
+        self.camera_thread = None
+
     def init_camera(self):
-        self.log.debug("init camera")
-        vs = VideoStream(usePiCamera=True, resolution=(1920, 1088))
-        vs.start()
+        # self.log.debug("init camera")
+        # vs = VideoStream(usePiCamera=True, resolution=(1920, 1088))
+        # vs.start()
+        # time.sleep(2.0)
+        import picamera
+        from picamera.array import PiRGBArray
+
+        camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
+        # camera.start_preview()
         time.sleep(2.0)
-        return vs
+        self.rawCapture = PiRGBArray(camera)
+        self.cap = camera.capture_continuous(self.rawCapture,
+                                             format="bgr",
+                                             use_video_port=True)
+        self.camera_thread = Thread(target=self.run)
+        self.camera_thread.start()
+        return camera
 
     def close_camera(self, camera):
         self.log.debug("close camera")
-        camera.stop()
+        camera.close()
+        self.run_camera.set()
+
+    def run(self):
+        while not self.run_camera.is_set():
+            self.rawCapture.truncate(0)
+            self.img = next(self.cap).array
 
     def take_preview_image(self, camera):
-        img = camera.read()
-        return resize(img, width=self.preview_width)
+        while self.img is None:
+            time.sleep(0.1)
+        return resize(self.img, width=self.preview_width)
 
     def take_photo(self, camera, path):
-        img = camera.read()
+        while self.img is None:
+            time.sleep(0.1)
         target = os.path.join(path, self.get_image_name())
-        cv2.imwrite(target, img)
+        cv2.imwrite(target, self.img)
         return target
 
 
