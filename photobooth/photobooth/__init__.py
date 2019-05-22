@@ -9,6 +9,7 @@ from photobooth.photobooth.tools import GIFCreator
 from enum import Enum
 from threading import Thread, Event
 from multiprocessing import Process
+import subprocess
 import numpy as np
 import cv2
 import gphoto2 as gp
@@ -119,7 +120,7 @@ class GPIOInput(Input):
         GPIO.setmode(GPIO.BCM)
         for k in self.pinmap.keys():
             GPIO.setup(k, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            GPIO.add_event_detect(k, GPIO.FALLING, bouncetime=100, callback=self.callback)
+            GPIO.add_event_detect(k, GPIO.FALLING, bouncetime=1000, callback=self.callback)
 
     def callback(self, channel):
         if channel in self.pinmap.keys():
@@ -151,6 +152,8 @@ class Photobooth:
                  gif_pause=1.0,
                  input_handler=None,
                  server=True):
+
+        # options
         self.image_dir = image_dir
         self.timer_limit = 3
         self.fullscreen = fullscreen
@@ -264,6 +267,7 @@ class Photobooth:
             timer_active = False
             trigger = False
             last_snap = None
+            last_snap_path = None
             # gif
             gif_buffer = None
             # counter, fps
@@ -310,6 +314,7 @@ class Photobooth:
                 # get action
                 action = self.get_action()
 
+                # handle action
                 if action is not Action.none:
                     self.log.info("ACTION: {}".format(action))
                     # reset GIF buffer
@@ -319,6 +324,7 @@ class Photobooth:
                 elif action == Action.photo or trigger:  # SPACE = direct photo
                     # take photo
                     target = self.take_photo(camera, self.path_images)
+                    last_snap_path = target
                     # create thumbnail in new process
                     Thread(target=self.create_thumb, args=(target,)).start()
                     # reset trigger and timer
@@ -332,7 +338,10 @@ class Photobooth:
                     self.log.info("Start GIF")
                     gif_buffer = GIFCreator(size=self.gif_length, pause=self.gif_pause)
                 elif action == Action.print_last_photo:
-                    self.log.warning("ToDo: printing last photo is not implemented")
+                    if last_snap_path is not None:
+                        self.print_image(last_snap_path)
+                    else:
+                        self.log.warning("No last snap to print!")
                 elif gif_buffer is not None:
                     gif_buffer.update(img)
                     if gif_buffer.is_full():
@@ -346,7 +355,7 @@ class Photobooth:
                 i += 1
                 fps.update()
                 fps.stop()
-                self.log.debug("FPS: {}".format(fps.fps()))
+                # self.log.debug("FPS: {}".format(fps.fps()))
             # cleanup
             self.log.info("cleanup")
             self.close_camera(camera)
@@ -392,6 +401,23 @@ class Photobooth:
         target = os.path.join(path, self.get_image_name())
         cv2.imwrite(target, img)
         return target
+
+    def print_image(self, image_path, fit_to_page=True, printer=None):
+        """
+        Prints image
+        :param image_path: path to image
+        :param fit_to_page: scale image to fit page
+        :param printer: printer name or None for default printer
+        :return: success
+        """
+        cmd = ["lpr"]
+        if printer is not None:
+            cmd.extend(["-d", printer])
+        if fit_to_page:
+            cmd.extend(["-o", "fit-to-page"])
+        cmd.append(image_path)
+        p = subprocess.Popen(cmd)
+        return True
 
     def get_image_name(self, file_type="jpg"):
         return "{}.{}".format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), file_type)
