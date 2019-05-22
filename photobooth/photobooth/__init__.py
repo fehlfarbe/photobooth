@@ -355,7 +355,7 @@ class Photobooth:
                 i += 1
                 fps.update()
                 fps.stop()
-                # self.log.debug("FPS: {}".format(fps.fps()))
+                self.log.debug("FPS: {}".format(fps.fps()))
             # cleanup
             self.log.info("cleanup")
             self.close_camera(camera)
@@ -457,7 +457,9 @@ class Raspibooth(Photobooth):
     def __init__(self, *args, **kwargs):
         super(Raspibooth, self).__init__(*args, **kwargs)
         self.rawCapture = None
+        self.rawCapture_preview = None
         self.cap = None
+        self.cap_preview = None
         self.img = None
         self.run_camera = Event()
         self.camera_thread = None
@@ -473,10 +475,20 @@ class Raspibooth(Photobooth):
         camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
         # camera.start_preview()
         time.sleep(2.0)
-        self.rawCapture = PiRGBArray(camera)
-        self.cap = camera.capture_continuous(self.rawCapture,
-                                             format="bgr",
-                                             use_video_port=True)
+        # self.rawCapture = PiRGBArray(camera)
+        self.rawCapture_preview = PiRGBArray(camera, size=(800, 480))
+        # self.cap = camera.capture_continuous(self.rawCapture,
+        #                                      format="bgr",
+        #                                      use_video_port=True)
+        self.cap_preview = camera.capture_continuous(self.rawCapture_preview,
+                                                     format="bgr",
+                                                     splitter_port=2,
+                                                     resize=(800, 480),
+                                                     use_video_port=True)
+        self.log.error(self.rawCapture_preview)
+        self.log.error(self.rawCapture)
+        self.log.error(self.cap_preview)
+        self.log.error(self.cap)
         self.camera_thread = Thread(target=self.run)
         self.camera_thread.start()
         return camera
@@ -488,19 +500,24 @@ class Raspibooth(Photobooth):
 
     def run(self):
         while not self.run_camera.is_set():
-            self.rawCapture.truncate(0)
-            self.img = next(self.cap).array
+            self.rawCapture_preview.truncate(0)
+            self.img = next(self.cap_preview).array
 
     def take_preview_image(self, camera):
         while self.img is None:
             time.sleep(0.1)
-        return resize(self.img, width=self.preview_width)
+        return self.img
+        # return resize(self.img, width=self.preview_width)
 
     def take_photo(self, camera, path):
         while self.img is None:
             time.sleep(0.1)
+        # self.rawCapture.truncate(0)
+        img = np.empty((1088, 1920, 3), dtype=np.uint8)
+        camera.capture(img, 'bgr', use_video_port=True)
+        # img = next(self.cap).array
         target = os.path.join(path, self.get_image_name())
-        cv2.imwrite(target, self.img)
+        cv2.imwrite(target, img)
         return target
 
 
