@@ -16,6 +16,10 @@ main {
     background: transparent;
 }
 
+nav {
+    margin: 10px auto;
+}
+
 .gallery {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(133px, 1280px));

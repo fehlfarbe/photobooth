@@ -208,10 +208,12 @@ class Photobooth:
             handler.close()
 
     def update_window(self, frame):
-        if frame.shape[1] > self.preview_width:
-            frame = resize(frame, width=self.preview_width)
-        if frame.dtype != np.uint8:
-            frame = frame.astype(np.uint8)
+        info = pygame.display.Info()
+        frame = resize(frame, height=info.current_h)
+        # if frame.shape[1] > self.preview_width:
+        #     frame = resize(frame, width=self.preview_width)
+        # if frame.dtype != np.uint8:
+        #     frame = frame.astype(np.uint8)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = np.rot90(frame)
         frame = pygame.surfarray.make_surface(frame)
@@ -242,6 +244,12 @@ class Photobooth:
             for img in buffer.images:
                 y, x, c = img.shape
                 img = cv2.rectangle(img.copy(), (0, 0), (x, y), (0, 255, 0), 10)
+                text = "GIF replay"
+                font = cv2.FONT_HERSHEY_PLAIN
+                font_scale = 2
+                thickness = 2
+                cv2.putText(img, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
+                            cv2.LINE_AA)
                 self.update_window(img)
                 time.sleep(pause)
 
@@ -307,6 +315,12 @@ class Photobooth:
                 elif gif_buffer is not None:
                     y, x, c = img_preview.shape
                     cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
+                    text = "GIF record"
+                    font = cv2.FONT_HERSHEY_PLAIN
+                    font_scale = 2
+                    thickness = 2
+                    cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
+                                cv2.LINE_AA)
 
                 # display image
                 self.update_window(img_preview)
@@ -346,8 +360,10 @@ class Photobooth:
                     gif_buffer.update(img)
                     if gif_buffer.is_full():
                         file_path = os.path.join(self.path_images, self.get_image_name("gif"))
+                        file_path_thumb = os.path.join(self.path_thumbs, self.get_image_name("gif"))
                         self.log.info("GIF buffer full, save GIF to {}".format(file_path))
                         gif_buffer.save_to(file_path)
+                        gif_buffer.save_to(file_path_thumb)
                         self.log.info("Play GIF")
                         self.show_gif(gif_buffer)
                         gif_buffer = None
@@ -473,6 +489,7 @@ class Raspibooth(Photobooth):
         from picamera.array import PiRGBArray
 
         camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
+        self.log.info(camera)
         # camera.start_preview()
         time.sleep(2.0)
         # self.rawCapture = PiRGBArray(camera)
@@ -494,7 +511,7 @@ class Raspibooth(Photobooth):
         return camera
 
     def close_camera(self, camera):
-        self.log.debug("close camera")
+        self.log.info("close camera")
         camera.close()
         self.run_camera.set()
 

@@ -1,8 +1,39 @@
 {% extends "base.html" %}
 
+{% macro render_pagination(pagination) %}
+  <nav>
+	  <ul class="pagination justify-content-center pagination-lg">
+		  {% if pagination.has_prev %}
+		  <li class="page-item"><a href="{{ url_for_other_page(pagination.page - 1) }}" class="page-link">&#x25C4;</a></li>
+	  {% endif %}
+	  {%- for page in pagination.iter_pages() %}
+		{% if page %}
+		  {% if page != pagination.page %}
+		  <li class="page-item"><a href="{{ url_for_other_page(page) }}" class="page-link">{{ page }}</a></li>
+		  {% else %}
+			<li class="page-item active">
+      			<a class="page-link" href="#">{{ page }}</a>
+    		</li>
+		  {% endif %}
+		{% else %}
+		  <li class="page-item">
+      			<a class="page-link" href="#">...</a>
+    		</li>
+		{% endif %}
+	  {%- endfor %}
+	  {% if pagination.has_next %}
+		  <li class="page-item"><a href="{{ url_for_other_page(pagination.page + 1) }}" class="page-link">&#x25BA;</a></li>
+	  {% endif %}
+	  </ul>
+  </nav>
+{% endmacro %}
+
 {% block content %}
 
 <main>
+
+	{{ render_pagination(pagination) }}
+
 	<div class="gallery">
 		{% for img in images %}
 
@@ -14,6 +45,9 @@
 
 		{% endfor %}
 	</div>
+
+	{{ render_pagination(pagination) }}
+
 </main>
 
 {% endblock %}

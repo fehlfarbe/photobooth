@@ -1,12 +1,23 @@
-from flask import render_template, send_from_directory
+from flask import render_template, send_from_directory, request, redirect, url_for
 from . import app
+from .pagination import Pagination
 import os
 import glob
 
 
-@app.route('/')
-@app.route('/index')
-def index():
+def url_for_other_page(page):
+    args = request.view_args.copy()
+    args['page'] = page
+    return url_for(request.endpoint, **args)
+
+
+app.jinja_env.globals['url_for_other_page'] = url_for_other_page
+
+
+@app.route('/', defaults={'page': 1})
+@app.route('/page/<int:page>')
+def index(page):
+    per_page = 10
     images = []
     img_dir = app.config.get("IMAGE_DIR", None)
 
@@ -17,8 +28,13 @@ def index():
             for img in glob.glob(os.path.join(app.config["IMAGE_DIR"], "thumbs", t)):
                 images.append(os.path.basename(img))
     images = sorted(images, reverse=True)
+    total_count = len(images)
+    start = (page-1) * per_page
+    end = min(start + per_page, total_count -1)
+    images = images[start:end]
+    pagination = Pagination(page, per_page, total_count)
     # app.logger.info(images)
-    return render_template('index.html', images=images)
+    return render_template('index.html', images=images, pagination=pagination)
 
 
 @app.route('/image/<path:path>')
