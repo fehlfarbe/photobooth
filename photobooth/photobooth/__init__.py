@@ -7,7 +7,7 @@ from imutils.video import VideoStream, FPS
 from imutils import resize
 from photobooth.photobooth.tools import GIFCreator
 from enum import Enum
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 from multiprocessing import Process
 import subprocess
 import numpy as np
@@ -151,7 +151,9 @@ class Photobooth:
                  gif_length=5,
                  gif_pause=1.0,
                  input_handler=None,
-                 server=True):
+                 server=True,
+                 flip_h=False,
+                 flip_v=True):
 
         # options
         self.image_dir = image_dir
@@ -170,6 +172,8 @@ class Photobooth:
                 pass
         self.input_handler = input_handler
         self.start_server = server
+        self.flip_h = flip_h
+        self.flip_v = flip_v
 
         # setup logger
         self.log = logging.getLogger("Photobooth")
@@ -296,34 +300,6 @@ class Photobooth:
                     self.event.set()
                     break
                 width, height = img.shape[1], img.shape[0]
-                # draw timer if active
-                if timer_active:
-                    time_left = self.timer_limit - (time.time() - t0)
-                    if time_left <= 0:
-                        time_left = 0
-                        trigger = True
-                    font = cv2.FONT_HERSHEY_PLAIN
-                    font_scale = 50 - 30 * (time_left - int(time_left))
-                    thickness = 20
-                    text = "{:d}".format(int(time_left))
-                    # textsize = cv2.getTextSize(text, font, 1, 2)[0]
-                    line_width, line_height = cv2.getTextSize(text, font, font_scale, thickness)[0]
-                    # get coords based on boundary
-                    x = (width - line_width) // 2
-                    y = (height + line_height) // 2
-                    cv2.putText(img_preview, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-                elif gif_buffer is not None:
-                    y, x, c = img_preview.shape
-                    cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
-                    text = "GIF record"
-                    font = cv2.FONT_HERSHEY_PLAIN
-                    font_scale = 2
-                    thickness = 2
-                    cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
-                                cv2.LINE_AA)
-
-                # display image
-                self.update_window(img_preview)
 
                 # get action
                 action = self.get_action()
@@ -354,6 +330,14 @@ class Photobooth:
                 elif action == Action.print_last_photo:
                     if last_snap_path is not None:
                         self.print_image(last_snap_path)
+                        y, x, c = img_preview.shape
+                        cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
+                        text = "Printing last image..."
+                        font = cv2.FONT_HERSHEY_PLAIN
+                        font_scale = 2
+                        thickness = 2
+                        cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
+                                    cv2.LINE_AA)
                     else:
                         self.log.warning("No last snap to print!")
                 elif gif_buffer is not None:
@@ -367,6 +351,35 @@ class Photobooth:
                         self.log.info("Play GIF")
                         self.show_gif(gif_buffer)
                         gif_buffer = None
+
+                # draw timer if active
+                if timer_active:
+                    time_left = self.timer_limit - (time.time() - t0)
+                    if time_left <= 0:
+                        time_left = 0
+                        trigger = True
+                    font = cv2.FONT_HERSHEY_PLAIN
+                    font_scale = 50 - 30 * (time_left - int(time_left))
+                    thickness = 20
+                    text = "{:d}".format(int(time_left))
+                    # textsize = cv2.getTextSize(text, font, 1, 2)[0]
+                    line_width, line_height = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                    # get coords based on boundary
+                    x = (width - line_width) // 2
+                    y = (height + line_height) // 2
+                    cv2.putText(img_preview, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                elif gif_buffer is not None:
+                    y, x, c = img_preview.shape
+                    cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
+                    text = "GIF record"
+                    font = cv2.FONT_HERSHEY_PLAIN
+                    font_scale = 2
+                    thickness = 2
+                    cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
+                                cv2.LINE_AA)
+
+                # display image
+                self.update_window(img_preview)
 
                 i += 1
                 fps.update()
@@ -418,14 +431,41 @@ class Photobooth:
         cv2.imwrite(target, img)
         return target
 
-    def print_image(self, image_path, fit_to_page=True, printer=None):
+    def print_image(self, image_path, fit_to_page=True, printer=None, enhance_for_barcode=True):
         """
         Prints image
         :param image_path: path to image
         :param fit_to_page: scale image to fit page
         :param printer: printer name or None for default printer
+        :param enhance_for_barcode: enhance image for barcode printer
         :return: success
         """
+
+        # open image, resize, equalize histogram and add frame
+        if enhance_for_barcode:
+            img = cv2.imread(image_path)
+            img = resize(img, width=500)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            img = cv2.GaussianBlur(img, (5, 5), 0)
+            img = cv2.equalizeHist(img)
+
+            # criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+            # Z = img.reshape((-1, 1))
+            # K = 16
+            # ret, label, center = cv2.kmeans(np.float32(Z), K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+            #
+            # # Now convert back into uint8, and make original image
+            # center = np.uint8(center)
+            # res = center[label.flatten()]
+            # img = res.reshape((img.shape))
+
+            # add border
+            h, w = img.shape
+            img = cv2.rectangle(img, (0, 0), (w, h), (0, 0, 0), 10)
+            cv2.imwrite("/tmp/print.jpg", img)
+            image_path = "/tmp/print.jpg"
+            # return
+
         cmd = ["lpr"]
         if printer is not None:
             cmd.extend(["-d", printer])
@@ -476,7 +516,9 @@ class Raspibooth(Photobooth):
         self.rawCapture_preview = None
         self.cap = None
         self.cap_preview = None
+        self.lock = Lock()
         self.img = None
+        self.camera = None
         self.run_camera = Event()
         self.camera_thread = None
 
@@ -489,6 +531,9 @@ class Raspibooth(Photobooth):
         from picamera.array import PiRGBArray
 
         camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
+        camera.hflip = self.flip_h
+        camera.vflip = self.flip_v
+        self.camera = camera
         self.log.info(camera)
         # camera.start_preview()
         time.sleep(2.0)
@@ -497,11 +542,11 @@ class Raspibooth(Photobooth):
         # self.cap = camera.capture_continuous(self.rawCapture,
         #                                      format="bgr",
         #                                      use_video_port=True)
-        self.cap_preview = camera.capture_continuous(self.rawCapture_preview,
-                                                     format="bgr",
-                                                     splitter_port=2,
-                                                     resize=(800, 480),
-                                                     use_video_port=True)
+        # self.cap_preview = camera.capture_continuous(self.rawCapture_preview,
+        #                                              format="bgr",
+        #                                              splitter_port=2,
+        #                                              resize=(800, 480),
+        #                                              use_video_port=True)
         self.log.error(self.rawCapture_preview)
         self.log.error(self.rawCapture)
         self.log.error(self.cap_preview)
@@ -512,23 +557,41 @@ class Raspibooth(Photobooth):
 
     def close_camera(self, camera):
         self.log.info("close camera")
-        camera.close()
         self.run_camera.set()
+        camera.close()
 
     def run(self):
-        while not self.run_camera.is_set():
+        # while not self.run_camera.is_set():
+        for frame in self.camera.capture_continuous(self.rawCapture_preview, format="bgr",
+                                                    resize=(800, 480),
+                                                    use_video_port=True, splitter_port=2):
+            image = frame.array
+            with self.lock:
+                self.img = image.copy()
             self.rawCapture_preview.truncate(0)
-            self.img = next(self.cap_preview).array
+
+            if self.run_camera.is_set():
+                break
+            # with self.lock:
+            #     self.rawCapture_preview.truncate(0)
+            #     self.log.debug("Get new image...")
+            #     self.img = next(self.cap_preview).array
 
     def take_preview_image(self, camera):
         while self.img is None:
             time.sleep(0.1)
-        return self.img
-        # return resize(self.img, width=self.preview_width)
+        with self.lock:
+            img = self.img.copy()
+
+        # img = np.empty((1088, 1920, 3), dtype=np.uint8)
+        # camera.capture(img, 'bgr', use_video_port=True, splitter_port=2)
+        # return resize(img, width=self.preview_width)
+
+        return img
 
     def take_photo(self, camera, path):
-        while self.img is None:
-            time.sleep(0.1)
+        # while self.img is None:
+        #     time.sleep(0.1)
         # self.rawCapture.truncate(0)
         img = np.empty((1088, 1920, 3), dtype=np.uint8)
         camera.capture(img, 'bgr', use_video_port=True)
