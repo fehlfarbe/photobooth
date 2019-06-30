@@ -9,6 +9,7 @@ from photobooth.photobooth.tools import GIFCreator
 from enum import Enum
 from threading import Thread, Event, Lock
 from multiprocessing import Process
+import signal
 import subprocess
 import numpy as np
 import cv2
@@ -36,6 +37,10 @@ class Action(Enum):
     interval = "interval"
     gif = "gif"
     print_last_photo = "print_last_photo"
+    info = "info"
+    effect_next = "next_effect"
+    effect_prev = "prev_effect"
+    effect_none = "none_effect"
 
 
 class Input:
@@ -74,7 +79,11 @@ class KeyboardInput(Input):
                            pygame.K_SPACE: Action.photo,
                            pygame.K_ESCAPE: Action.exit,
                            pygame.K_g: Action.gif,
-                           pygame.K_p: Action.print_last_photo}
+                           pygame.K_p: Action.print_last_photo,
+                           pygame.K_i: Action.info,
+                           pygame.K_LEFT: Action.effect_prev,
+                           pygame.K_RIGHT: Action.effect_next,
+                           pygame.K_DOWN: Action.effect_none}
         else:
             self.keymap = keymap
 
@@ -104,7 +113,7 @@ class GPIOInput(Input):
         GPIO.setmode(mode)
         if pinmap is None:
 
-            self.pinmap = {21: Action.photo,
+            self.pinmap = {21: Action.info,
                            20: Action.interval,
                            19: Action.gif,
                            16: Action.print_last_photo}
@@ -153,7 +162,7 @@ class Photobooth:
                  input_handler=None,
                  server=True,
                  flip_h=False,
-                 flip_v=True):
+                 flip_v=False):
 
         # options
         self.image_dir = image_dir
@@ -174,6 +183,7 @@ class Photobooth:
         self.start_server = server
         self.flip_h = flip_h
         self.flip_v = flip_v
+        self.verbose = verbose
 
         # setup logger
         self.log = logging.getLogger("Photobooth")
@@ -181,6 +191,7 @@ class Photobooth:
 
         # pygame window
         self.screen = None
+        self.frame_count = 0
 
         # threading
         self.event = Event()
@@ -211,18 +222,26 @@ class Photobooth:
         for handler in self.input_handler:
             handler.close()
 
-    def update_window(self, frame):
+    def update_window(self, frame, overlays=[]):
         info = pygame.display.Info()
-        frame = resize(frame, height=info.current_h)
-        # if frame.shape[1] > self.preview_width:
-        #     frame = resize(frame, width=self.preview_width)
-        # if frame.dtype != np.uint8:
-        #     frame = frame.astype(np.uint8)
+        # frame = resize(frame, height=info.current_h)
+        # convert and add image
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = np.rot90(frame)
         frame = pygame.surfarray.make_surface(frame)
         frame = pygame.transform.flip(frame, True, False)
+        frame = pygame.transform.scale(frame, (info.current_w, info.current_h))
         self.screen.blit(frame, (0, 0))
+
+        # add overlays
+        if self.verbose:
+            font = pygame.font.SysFont('freesans', 28, bold=True)
+            text = "frame #{:d}".format(self.frame_count)
+            overlays.append((font.render(text, 1, pygame.Color(255, 255, 255)), 0, info.current_h - 30))
+        for overlay, x, y in overlays:
+            self.screen.blit(overlay, (x, y))
+
+        # show!
         pygame.display.update()
 
     def show_snap(self, img, review_time=2):
@@ -244,17 +263,14 @@ class Photobooth:
             time.sleep(0.05)
 
     def show_gif(self, buffer, pause=0.3, repeat=5):
+        overlays = []
+        font = pygame.font.SysFont('freesans', 30, bold=True)
+        text = "GIF playback..."
+        overlay = font.render(text, 1, pygame.Color(255, 255, 255, 255))
+        overlays.append((overlay, 0, 0))
         for i in range(repeat):
             for img in buffer.images:
-                y, x, c = img.shape
-                img = cv2.rectangle(img.copy(), (0, 0), (x, y), (0, 255, 0), 10)
-                text = "GIF replay"
-                font = cv2.FONT_HERSHEY_PLAIN
-                font_scale = 2
-                thickness = 2
-                cv2.putText(img, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
-                            cv2.LINE_AA)
-                self.update_window(img)
+                self.update_window(img, overlays)
                 time.sleep(pause)
 
     def _preview(self):
@@ -270,6 +286,7 @@ class Photobooth:
         flags |= pygame.SRCALPHA
         pygame.init()
         pygame.display.set_caption("Photobooth")
+        pygame.mouse.set_visible(False)
         self.screen = pygame.display.set_mode((0, 0), flags, 32)
 
         # start preview
@@ -282,6 +299,18 @@ class Photobooth:
             last_snap_path = None
             # gif
             gif_buffer = None
+
+            info = False
+            overlays = []
+
+            # handle signals
+
+            def keyboardInterruptHandler(arg1, arg2):
+                self.log.info("Got SIGINT")
+                self.event.set()
+
+            signal.signal(signal.SIGINT, keyboardInterruptHandler)
+
             # counter, fps
             i = 0
             fps = FPS().start()
@@ -330,16 +359,24 @@ class Photobooth:
                 elif action == Action.print_last_photo:
                     if last_snap_path is not None:
                         self.print_image(last_snap_path)
-                        y, x, c = img_preview.shape
-                        cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
-                        text = "Printing last image..."
-                        font = cv2.FONT_HERSHEY_PLAIN
-                        font_scale = 2
-                        thickness = 2
-                        cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
-                                    cv2.LINE_AA)
+                        font = pygame.font.SysFont('symbola', 30, bold=True)
+                        text = "printing...🖶"
+                        overlay = font.render(text, 1, pygame.Color(255, 255, 255))
+                        w, h = overlay.get_size()
+                        overlays.append((overlay, int(width / 2.0 - w / 2.0), int(height / 2.0 - h / 2.0)))
                     else:
                         self.log.warning("No last snap to print!")
+                elif action == Action.info:
+                    info = not info
+                elif action == Action.effect_next:
+                    effect = self.effect_next()
+                    self.log.info("effect: {}".format(effect))
+                elif action == Action.effect_prev:
+                    effect = self.effect_prev()
+                    self.log.info("effect: {}".format(effect))
+                elif action == Action.effect_none:
+                    effect = self.effect_disable()
+                    self.log.info("effect: {}".format(effect))
                 elif gif_buffer is not None:
                     gif_buffer.update(img)
                     if gif_buffer.is_full():
@@ -358,30 +395,40 @@ class Photobooth:
                     if time_left <= 0:
                         time_left = 0
                         trigger = True
-                    font = cv2.FONT_HERSHEY_PLAIN
-                    font_scale = 50 - 30 * (time_left - int(time_left))
-                    thickness = 20
+                    font_scale = 350 - 50 * (time_left - int(time_left))
+                    font = pygame.font.SysFont('freesans', int(font_scale), bold=True)
                     text = "{:d}".format(int(time_left))
-                    # textsize = cv2.getTextSize(text, font, 1, 2)[0]
-                    line_width, line_height = cv2.getTextSize(text, font, font_scale, thickness)[0]
-                    # get coords based on boundary
-                    x = (width - line_width) // 2
-                    y = (height + line_height) // 2
-                    cv2.putText(img_preview, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                    overlay = font.render(text, 1, pygame.Color(255, 255, 255))
+                    w, h = overlay.get_size()
+                    overlays.append((overlay, int(width/2.0 - w/2.0), int(height/2.0 - h/2.0)))
                 elif gif_buffer is not None:
-                    y, x, c = img_preview.shape
-                    cv2.rectangle(img_preview, (0, 0), (x, y), (0, 0, 255), 5)
-                    text = "GIF record"
-                    font = cv2.FONT_HERSHEY_PLAIN
-                    font_scale = 2
-                    thickness = 2
-                    cv2.putText(img_preview, text, (15, y - 15), font, font_scale, (255, 255, 255), thickness,
-                                cv2.LINE_AA)
+                    font = pygame.font.SysFont('freesans', 30, bold=True)
+                    text = "GIF record..."
+                    overlay = font.render(text, 1, pygame.Color(128, 255, 255, 128))
+                    overlays.append((overlay, 0, 0))
+                elif info:
+                    self.log.debug("Show info text")
+                    font = pygame.font.SysFont('freesans', 18, bold=True)
+                    text = "INFO | 3...2...1...cheeese! | animated GIF | Print last image"
+                    overlays.append((font.render(text, 1, pygame.Color(255, 255, 255)), 0, 0))
+
+                if self.verbose:
+                    font = pygame.font.SysFont('freesans', 20, bold=True)
+                    try:
+                        text = "{:.2f} fps".format(float(fps.fps()))
+                    except TypeError:
+                        text = "0 fps"
+                    overlay = font.render(text, 1, pygame.Color(255, 255, 255))
+                    w, h = overlay.get_size()
+                    overlays.append((overlay, int(width-w), int(height-h)))
 
                 # display image
-                self.update_window(img_preview)
+                self.update_window(img_preview, overlays)
+                # clear overlays
+                overlays.clear()
 
                 i += 1
+                self.frame_count += 1
                 fps.update()
                 fps.stop()
                 self.log.debug("FPS: {}".format(fps.fps()))
@@ -423,10 +470,18 @@ class Photobooth:
 
     def take_preview_image(self, camera):
         img = camera.read()
+        if self.flip_h:
+            img = cv2.flip(img, 1)
+        if self.flip_v:
+            img = cv2.flip(img, 0)
         return resize(img, width=self.preview_width)
 
     def take_photo(self, camera, path):
         img = camera.read()
+        if self.flip_h:
+            img = cv2.flip(img, 1)
+        if self.flip_v:
+            img = cv2.flip(img, 0)
         target = os.path.join(path, self.get_image_name())
         cv2.imwrite(target, img)
         return target
@@ -507,20 +562,37 @@ class Photobooth:
         self.log.info("save thumbail to {}".format(thumbnail_path))
         cv2.imwrite(thumbnail_path, resized)
 
+    def effect_next(self):
+        return None
+
+    def effect_prev(self):
+        return None
+
+    def effect_disable(self):
+        return "off"
+
 
 class Raspibooth(Photobooth):
 
     def __init__(self, *args, **kwargs):
         super(Raspibooth, self).__init__(*args, **kwargs)
-        self.rawCapture = None
-        self.rawCapture_preview = None
-        self.cap = None
-        self.cap_preview = None
+        # self.rawCapture = None
+        # self.rawCapture_preview = None
+        # self.cap = None
+        # self.cap_preview = None
+        # self.stream = None
         self.lock = Lock()
+
         self.img = None
         self.camera = None
+
         self.run_camera = Event()
         self.camera_thread = None
+
+        self.effects = ("none", "negative", "solarize", "sketch",
+                        "emboss", "oilpaint", "pastel", "watercolor", "film",
+                        "colorswap", "washedout", "posterise", "cartoon")
+        self.current_effect = 0
 
     def init_camera(self):
         # self.log.debug("init camera")
@@ -530,75 +602,89 @@ class Raspibooth(Photobooth):
         import picamera
         from picamera.array import PiRGBArray
 
+        self.log.info("Open PiCamera...")
+        # self.camera = VideoStream(resolution=(800, 480), framerate=30, usePiCamera=True)
+        # self.camera.start()
+        # time.sleep(2.0)
         camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
         camera.hflip = self.flip_h
         camera.vflip = self.flip_v
+        camera.drc_strength = "medium"
         self.camera = camera
         self.log.info(camera)
         # camera.start_preview()
         time.sleep(2.0)
         # self.rawCapture = PiRGBArray(camera)
-        self.rawCapture_preview = PiRGBArray(camera, size=(800, 480))
-        # self.cap = camera.capture_continuous(self.rawCapture,
-        #                                      format="bgr",
-        #                                      use_video_port=True)
-        # self.cap_preview = camera.capture_continuous(self.rawCapture_preview,
-        #                                              format="bgr",
-        #                                              splitter_port=2,
-        #                                              resize=(800, 480),
-        #                                              use_video_port=True)
-        self.log.error(self.rawCapture_preview)
-        self.log.error(self.rawCapture)
-        self.log.error(self.cap_preview)
-        self.log.error(self.cap)
         self.camera_thread = Thread(target=self.run)
         self.camera_thread.start()
-        return camera
+        return self.camera
 
     def close_camera(self, camera):
         self.log.info("close camera")
         self.run_camera.set()
+        self.camera_thread.join()
+        # self.stream.close()
+        # self.rawCapture_preview.close()
         camera.close()
 
     def run(self):
-        # while not self.run_camera.is_set():
-        for frame in self.camera.capture_continuous(self.rawCapture_preview, format="bgr",
-                                                    resize=(800, 480),
-                                                    use_video_port=True, splitter_port=2):
-            image = frame.array
-            with self.lock:
-                self.img = image.copy()
-            self.rawCapture_preview.truncate(0)
+        from picamera.array import PiRGBArray
+        i = 0
+        rawCapture_preview = PiRGBArray(self.camera, size=(800, 480))
+        stream = self.camera.capture_continuous(rawCapture_preview,
+                                                format="bgr",
+                                                resize=(800, 480),
+                                                use_video_port=True)
+        for frame in stream:
+            self.log.debug("got frame {:d}".format(i))
+            self.img = frame.array.copy()
+
+            rawCapture_preview.truncate(0)
+            i += 1
 
             if self.run_camera.is_set():
+                self.log.debug("close camera preview")
                 break
-            # with self.lock:
-            #     self.rawCapture_preview.truncate(0)
-            #     self.log.debug("Get new image...")
-            #     self.img = next(self.cap_preview).array
+        stream.close()
 
     def take_preview_image(self, camera):
         while self.img is None:
+            self.log.warning("Waiting for preview image...")
             time.sleep(0.1)
-        with self.lock:
-            img = self.img.copy()
+        #with self.lock:
+        return self.img
+        # img = self.img.copy()
 
         # img = np.empty((1088, 1920, 3), dtype=np.uint8)
         # camera.capture(img, 'bgr', use_video_port=True, splitter_port=2)
         # return resize(img, width=self.preview_width)
 
-        return img
+        # return img
 
     def take_photo(self, camera, path):
         # while self.img is None:
         #     time.sleep(0.1)
         # self.rawCapture.truncate(0)
         img = np.empty((1088, 1920, 3), dtype=np.uint8)
-        camera.capture(img, 'bgr', use_video_port=True)
+        camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
         # img = next(self.cap).array
         target = os.path.join(path, self.get_image_name())
         cv2.imwrite(target, img)
         return target
+
+    def effect_next(self):
+        self.current_effect = (self.current_effect + 1) % len(self.effects)
+        self.camera.image_effect = self.effects[self.current_effect]
+        return self.effects[self.current_effect]
+
+    def effect_prev(self):
+        self.current_effect = (self.current_effect - 1) % len(self.effects)
+        self.camera.image_effect = self.effects[self.current_effect]
+        return self.effects[self.current_effect]
+
+    def effect_disable(self):
+        self.current_effect = 0
+        self.camera.image_effect = self.effects[self.current_effect]
 
 
 class GPhotobooth(Photobooth):

@@ -46,3 +46,7 @@ def send_image(path):
 def send_thumb(path):
     return send_from_directory(os.path.join(app.config.get("IMAGE_DIR", "."), "thumbs"), path)
 
+
+@app.errorhandler(404)
+def page_not_found(e):
+    return index(1)
