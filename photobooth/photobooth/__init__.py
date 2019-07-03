@@ -162,7 +162,8 @@ class Photobooth:
                  input_handler=None,
                  server=True,
                  flip_h=False,
-                 flip_v=False):
+                 flip_v=False,
+                 cam_type=Camera.v4l2):
 
         # options
         self.image_dir = image_dir
@@ -183,6 +184,7 @@ class Photobooth:
         self.start_server = server
         self.flip_h = flip_h
         self.flip_v = flip_v
+        self.cam_type = cam_type
         self.verbose = verbose
 
         # setup logger
@@ -274,9 +276,6 @@ class Photobooth:
                 time.sleep(pause)
 
     def _preview(self):
-        # init camera
-        camera = self.init_camera()
-
         # setup window
         flags = 0
         if self.fullscreen:
@@ -288,6 +287,18 @@ class Photobooth:
         pygame.display.set_caption("Photobooth")
         pygame.mouse.set_visible(False)
         self.screen = pygame.display.set_mode((0, 0), flags, 32)
+
+        # init camera
+        # camera = self.init_camera()
+        if self.cam_type == Camera.raspicam:
+            PhotoboothCam = RaspiboothCam
+        elif self.cam_type == Camera.gphoto2:
+            PhotoboothCam = GPhotoboothCam
+        camera = PhotoboothCam(verbose=self.verbose,
+                               flip_h=self.flip_h,
+                               flip_v=self.flip_v,
+                               preview_width=self.preview_width)
+        camera.init_camera()
 
         # start preview
         if camera is not None:
@@ -322,7 +333,8 @@ class Photobooth:
                     self.show_snap(last_snap, review_time=self.review_time)
                     last_snap = None
                 # self.log.debug('Capturing preview image {:06d}'.format(i))
-                img = self.take_preview_image(camera)
+                img = camera.take_preview_image()
+
                 img_preview = img.copy()
                 if img is None:
                     self.log.error("Got None image for preview...exit")
@@ -342,14 +354,16 @@ class Photobooth:
                     break
                 elif action == Action.photo or trigger:  # SPACE = direct photo
                     # take photo
-                    target = self.take_photo(camera, self.path_images)
+                    img_full = camera.take_photo()
+                    target = os.path.join(self.path_images, self.get_image_name())
+                    cv2.imwrite(target, img_full)
                     last_snap_path = target
                     # create thumbnail in new process
                     Thread(target=self.create_thumb, args=(target,)).start()
                     # reset trigger and timer
                     trigger = timer_active = False
                     # load last snap
-                    last_snap = cv2.imread(target)
+                    last_snap = img_full
                 elif action == Action.interval:  # a - photo after 3 seconds
                     t0 = time.time()
                     timer_active = True
@@ -360,7 +374,7 @@ class Photobooth:
                     if last_snap_path is not None:
                         self.print_image(last_snap_path)
                         font = pygame.font.SysFont('symbola', 30, bold=True)
-                        text = "printing...🖶"
+                        text = "printing..."
                         overlay = font.render(text, 1, pygame.Color(255, 255, 255))
                         w, h = overlay.get_size()
                         overlays.append((overlay, int(width / 2.0 - w / 2.0), int(height / 2.0 - h / 2.0)))
@@ -369,13 +383,13 @@ class Photobooth:
                 elif action == Action.info:
                     info = not info
                 elif action == Action.effect_next:
-                    effect = self.effect_next()
+                    effect = camera.effect_next()
                     self.log.info("effect: {}".format(effect))
                 elif action == Action.effect_prev:
-                    effect = self.effect_prev()
+                    effect = camera.effect_prev()
                     self.log.info("effect: {}".format(effect))
                 elif action == Action.effect_none:
-                    effect = self.effect_disable()
+                    effect = camera.effect_disable()
                     self.log.info("effect: {}".format(effect))
                 elif gif_buffer is not None:
                     gif_buffer.update(img)
@@ -434,7 +448,7 @@ class Photobooth:
                 self.log.debug("FPS: {}".format(fps.fps()))
             # cleanup
             self.log.info("cleanup")
-            self.close_camera(camera)
+            camera.close()
             pygame.quit()
         return 0
 
@@ -456,35 +470,6 @@ class Photobooth:
         else:
             self.preview_thread = Thread(target=self._preview)
             self.preview_thread.start()
-
-    def init_camera(self):
-        self.log.debug("init camera")
-        vs = VideoStream(resolution=(1920, 1080))
-        vs.start()
-        time.sleep(2.0)
-        return vs
-
-    def close_camera(self, camera):
-        self.log.debug("close camera")
-        camera.stop()
-
-    def take_preview_image(self, camera):
-        img = camera.read()
-        if self.flip_h:
-            img = cv2.flip(img, 1)
-        if self.flip_v:
-            img = cv2.flip(img, 0)
-        return resize(img, width=self.preview_width)
-
-    def take_photo(self, camera, path):
-        img = camera.read()
-        if self.flip_h:
-            img = cv2.flip(img, 1)
-        if self.flip_v:
-            img = cv2.flip(img, 0)
-        target = os.path.join(path, self.get_image_name())
-        cv2.imwrite(target, img)
-        return target
 
     def print_image(self, image_path, fit_to_page=True, printer=None, enhance_for_barcode=True):
         """
@@ -562,6 +547,49 @@ class Photobooth:
         self.log.info("save thumbail to {}".format(thumbnail_path))
         cv2.imwrite(thumbnail_path, resized)
 
+
+class PhotoboothCam:
+
+    def __init__(self, verbose=False, flip_h=False, flip_v=False, preview_width=800):
+        self.flip_h = flip_h
+        self.flip_v = flip_v
+        self.preview_width = preview_width
+
+        # setup logger
+        self.log = logging.getLogger("PhotoboothCam")
+        self.log.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+        self.camera = None
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        self.log.debug("close camera")
+        self.camera.stop()
+
+    def init_camera(self):
+        self.log.debug("init camera")
+        self.camera = VideoStream(resolution=(1920, 1080))
+        self.camera.start()
+        time.sleep(2.0)
+
+    def take_preview_image(self):
+        img = self.camera.read()
+        if self.flip_h:
+            img = cv2.flip(img, 1)
+        if self.flip_v:
+            img = cv2.flip(img, 0)
+        return resize(img, width=self.preview_width)
+
+    def take_photo(self):
+        img = self.camera.read()
+        if self.flip_h:
+            img = cv2.flip(img, 1)
+        if self.flip_v:
+            img = cv2.flip(img, 0)
+        return img
+
     def effect_next(self):
         return None
 
@@ -569,13 +597,13 @@ class Photobooth:
         return None
 
     def effect_disable(self):
-        return "off"
+        return None
 
 
-class Raspibooth(Photobooth):
+class RaspiboothCam(PhotoboothCam):
 
     def __init__(self, *args, **kwargs):
-        super(Raspibooth, self).__init__(*args, **kwargs)
+        super(RaspiboothCam, self).__init__(*args, **kwargs)
         # self.rawCapture = None
         # self.rawCapture_preview = None
         # self.cap = None
@@ -606,26 +634,25 @@ class Raspibooth(Photobooth):
         # self.camera = VideoStream(resolution=(800, 480), framerate=30, usePiCamera=True)
         # self.camera.start()
         # time.sleep(2.0)
-        camera = picamera.PiCamera(resolution=(1920, 1080), framerate=20)
-        camera.hflip = self.flip_h
-        camera.vflip = self.flip_v
-        camera.drc_strength = "medium"
-        self.camera = camera
-        self.log.info(camera)
+        self.camera = picamera.PiCamera(resolution=(1920, 1080))
+        self.camera.hflip = self.flip_h
+        self.camera.vflip = self.flip_v
+        self.camera.drc_strength = "medium"
+        self.log.info(self.camera)
         # camera.start_preview()
         time.sleep(2.0)
         # self.rawCapture = PiRGBArray(camera)
         self.camera_thread = Thread(target=self.run)
         self.camera_thread.start()
-        return self.camera
+        # return self.camera
 
-    def close_camera(self, camera):
+    def close(self):
         self.log.info("close camera")
         self.run_camera.set()
         self.camera_thread.join()
         # self.stream.close()
         # self.rawCapture_preview.close()
-        camera.close()
+        self.camera.close()
 
     def run(self):
         from picamera.array import PiRGBArray
@@ -647,7 +674,7 @@ class Raspibooth(Photobooth):
                 break
         stream.close()
 
-    def take_preview_image(self, camera):
+    def take_preview_image(self):
         while self.img is None:
             self.log.warning("Waiting for preview image...")
             time.sleep(0.1)
@@ -661,16 +688,17 @@ class Raspibooth(Photobooth):
 
         # return img
 
-    def take_photo(self, camera, path):
+    def take_photo(self):
         # while self.img is None:
         #     time.sleep(0.1)
         # self.rawCapture.truncate(0)
         img = np.empty((1088, 1920, 3), dtype=np.uint8)
-        camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
+        self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
         # img = next(self.cap).array
-        target = os.path.join(path, self.get_image_name())
-        cv2.imwrite(target, img)
-        return target
+        # target = os.path.join(path, self.get_image_name())
+        # cv2.imwrite(path, img)
+        # return target
+        return img
 
     def effect_next(self):
         self.current_effect = (self.current_effect + 1) % len(self.effects)
@@ -685,19 +713,23 @@ class Raspibooth(Photobooth):
     def effect_disable(self):
         self.current_effect = 0
         self.camera.image_effect = self.effects[self.current_effect]
+        return None
 
 
-class GPhotobooth(Photobooth):
+class GPhotoboothCam(PhotoboothCam):
+
+    def __init__(self, *args, **kwargs):
+        super(GPhotoboothCam, self).__init__(*args, **kwargs)
 
     def init_camera(self):
         self.log.debug("Init GPhoto2 camera")
         callback_obj = gp.check_result(gp.use_python_logging())
-        camera = gp.check_result(gp.gp_camera_new())
-        gp.check_result(gp.gp_camera_init(camera))
+        self.camera = gp.check_result(gp.gp_camera_new())
+        gp.check_result(gp.gp_camera_init(self.camera))
         # required configuration will depend on camera type!
         self.log.info('Checking camera config')
         # get configuration tree
-        config = gp.check_result(gp.gp_camera_get_config(camera))
+        config = gp.check_result(gp.gp_camera_get_config(self.camera))
         # find the image format config item
         OK, image_format = gp.gp_widget_get_child_by_name(config, 'imageformat')
         if OK >= gp.GP_OK:
@@ -715,29 +747,31 @@ class GPhotobooth(Photobooth):
             value = gp.check_result(gp.gp_widget_get_choice(capture_size_class, 2))
             gp.check_result(gp.gp_widget_set_value(capture_size_class, value))
             # set config
-            gp.check_result(gp.gp_camera_set_config(camera, config))
-        return camera
+            gp.check_result(gp.gp_camera_set_config(self.camera, config))
+        return True
 
-    def close_camera(self, camera):
+    def close(self):
         self.log.debug("close GPhoto2 camera")
-        return gp.check_result(gp.gp_camera_exit(camera))
+        return gp.check_result(gp.gp_camera_exit(self.camera))
 
-    def take_preview_image(self, camera):
+    def take_preview_image(self):
         # self.log.debug("taking preview photo via GPhoto2")
-        camera_file = gp.check_result(gp.gp_camera_capture_preview(camera))
+        camera_file = gp.check_result(gp.gp_camera_capture_preview(self.camera))
         file_data = gp.check_result(gp.gp_file_get_data_and_size(camera_file))
         # decode image
         img = cv2.imdecode(np.fromstring(io.BytesIO(file_data).read(), np.uint8), 1)
         return resize(img, width=self.preview_width)
 
-    def take_photo(self, camera, path):
+    def take_photo(self):
+        import tempfile
         self.log.info("Capturing image")
         file_path = gp.check_result(gp.gp_camera_capture(
-            camera, gp.GP_CAPTURE_IMAGE))
+            self.camera, gp.GP_CAPTURE_IMAGE))
         self.log.info("Camera file path: {0}/{1}".format(file_path.folder, file_path.name))
-        target = os.path.join(path, self.get_image_name())
+        target = os.path.join(tempfile.gettempdir(), "tempfile.jpg")
         self.log.info("Copying image to {}".format(target))
         camera_file = gp.check_result(gp.gp_camera_file_get(
-            camera, file_path.folder, file_path.name, gp.GP_FILE_TYPE_NORMAL))
+            self.camera, file_path.folder, file_path.name, gp.GP_FILE_TYPE_NORMAL))
         gp.check_result(gp.gp_file_save(camera_file, target))
-        return target
+        img = cv2.imread(target)
+        return img

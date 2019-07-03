@@ -1,5 +1,5 @@
 import argparse
-from photobooth.photobooth import Photobooth, GPhotobooth, Raspibooth, Camera
+from photobooth.photobooth import Photobooth, Camera
 
 
 if __name__ == "__main__":
@@ -18,12 +18,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # set Photobooth class
-    if args.camera == Camera.gphoto2:
-        Photobooth = GPhotobooth
-    elif args.camera == Camera.raspicam:
-        Photobooth = Raspibooth
-
     # create photobooth
     pb = Photobooth(image_dir=args.image_dir,
                     fullscreen=args.fullscreen,
@@ -32,7 +26,8 @@ if __name__ == "__main__":
                     verbose=args.verbose,
                     server=args.server,
                     flip_h=args.hflip,
-                    flip_v=args.vflip)
+                    flip_v=args.vflip,
+                    cam_type=args.camera)
     if not args.server_only:
         pb.preview(block=True)
     else:
