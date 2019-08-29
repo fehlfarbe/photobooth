@@ -604,11 +604,6 @@ class RaspiboothCam(PhotoboothCam):
 
     def __init__(self, *args, **kwargs):
         super(RaspiboothCam, self).__init__(*args, **kwargs)
-        # self.rawCapture = None
-        # self.rawCapture_preview = None
-        # self.cap = None
-        # self.cap_preview = None
-        # self.stream = None
         self.lock = Lock()
 
         self.img = None
@@ -623,81 +618,64 @@ class RaspiboothCam(PhotoboothCam):
         self.current_effect = 0
 
     def init_camera(self):
-        # self.log.debug("init camera")
-        # vs = VideoStream(usePiCamera=True, resolution=(1920, 1088))
-        # vs.start()
-        # time.sleep(2.0)
         import picamera
-        from picamera.array import PiRGBArray
-
         self.log.info("Open PiCamera...")
-        # self.camera = VideoStream(resolution=(800, 480), framerate=30, usePiCamera=True)
-        # self.camera.start()
-        # time.sleep(2.0)
         self.camera = picamera.PiCamera(resolution=(1920, 1080))
         self.camera.hflip = self.flip_h
         self.camera.vflip = self.flip_v
-        self.camera.drc_strength = "medium"
+        self.camera.drc_strength = "off"
         self.log.info(self.camera)
-        # camera.start_preview()
         time.sleep(2.0)
-        # self.rawCapture = PiRGBArray(camera)
         self.camera_thread = Thread(target=self.run)
         self.camera_thread.start()
-        # return self.camera
+        return True
 
     def close(self):
         self.log.info("close camera")
         self.run_camera.set()
         self.camera_thread.join()
-        # self.stream.close()
-        # self.rawCapture_preview.close()
         self.camera.close()
 
     def run(self):
         from picamera.array import PiRGBArray
-        i = 0
-        rawCapture_preview = PiRGBArray(self.camera, size=(800, 480))
-        stream = self.camera.capture_continuous(rawCapture_preview,
-                                                format="bgr",
-                                                resize=(800, 480),
-                                                use_video_port=True)
-        for frame in stream:
-            self.log.debug("got frame {:d}".format(i))
-            self.img = frame.array.copy()
-
-            rawCapture_preview.truncate(0)
-            i += 1
-
-            if self.run_camera.is_set():
-                self.log.debug("close camera preview")
-                break
-        stream.close()
+        # i = 0
+        # raw_preview = PiRGBArray(self.camera, size=(800, 480))
+        img = np.empty((1088, 1920, 3), dtype=np.uint8)
+        while not self.run_camera.is_set():
+            self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=0)
+            self.img = resize(img, width=800)
+        # this is much faster but stucks after some minutes
+        # see: https://github.com/waveform80/picamera/issues/574
+        # kernel 4.4 seems more stable
+        # stream = self.camera.capture_continuous(raw_preview,
+        #                                         format="bgr",
+        #                                         resize=(800, 480),
+        #                                         use_video_port=True)
+        # for frame in stream:
+        #     self.log.debug("got frame {:d}".format(i))
+        #     self.img = frame.array.copy()
+        #
+        #     raw_preview.truncate(0)
+        #     i += 1
+        #
+        #     if self.run_camera.is_set():
+        #         self.log.debug("close camera preview")
+        #         break
+        # stream.close()
 
     def take_preview_image(self):
+        # img = np.empty((1088, 1920, 3), dtype=np.uint8)
+        # self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
+        # return self.img
+
         while self.img is None:
             self.log.warning("Waiting for preview image...")
             time.sleep(0.1)
-        #with self.lock:
         return self.img
-        # img = self.img.copy()
-
-        # img = np.empty((1088, 1920, 3), dtype=np.uint8)
-        # camera.capture(img, 'bgr', use_video_port=True, splitter_port=2)
-        # return resize(img, width=self.preview_width)
-
-        # return img
 
     def take_photo(self):
-        # while self.img is None:
-        #     time.sleep(0.1)
-        # self.rawCapture.truncate(0)
         img = np.empty((1088, 1920, 3), dtype=np.uint8)
         self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
-        # img = next(self.cap).array
-        # target = os.path.join(path, self.get_image_name())
-        # cv2.imwrite(path, img)
-        # return target
         return img
 
     def effect_next(self):
