@@ -3,6 +3,14 @@ Photobooth
 
 Photobooth module for Raspberry Pi and other computers. Supports many cameras via picamera, v4l2, gphoto...
 
+Install:
+-------
+Clone Repo:
+`https://github.com/fehlfarbe/photobooth.git && cd photobooth`
+
+and install repo content via pip:
+`pip3 install -e photobooth`
+
 ToDo:
 -----
 
