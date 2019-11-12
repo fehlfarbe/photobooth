@@ -16,7 +16,6 @@ import cv2
 import gphoto2 as gp
 import pygame
 
-
 logging.basicConfig(
     format='%(levelname)s: %(name)s: %(message)s', level=logging.DEBUG)
 
@@ -50,6 +49,7 @@ class Input:
         self.log = logging.getLogger(self.__class__.__name__)
         # self.last_action = Action.none
         # self.event = Event()
+
     #     self.thread = Thread(target=self._update_thread)
     #     self.thread.start()
     #
@@ -268,10 +268,19 @@ class Photobooth:
         overlays = []
         font = pygame.font.SysFont('freesans', 30, bold=True)
         text = "GIF playback..."
-        overlay = font.render(text, 1, pygame.Color(255, 255, 255, 255))
-        overlays.append((overlay, 0, 0))
+        overlay = font.render(text, 1, pygame.Color(0, 255, 0, 128))
+        overlay_box = pygame.Surface(self.screen.get_size(),
+                                     flags=pygame.HWSURFACE | pygame.SRCALPHA)
+        pygame.draw.rect(overlay_box, (0, 255, 0, 128),
+                         pygame.Rect(0, 0,
+                                     self.screen.get_size()[0],
+                                     self.screen.get_size()[1]),
+                         15)
+        overlays.append((overlay, 10, 10))
+        overlays.append((overlay_box, 0, 0))
         for i in range(repeat):
             for img in buffer.images:
+                # cv2.rectangle(img, (0, 0), (img.shape[1], img.shape[0]), (0, 255, 0), 5)
                 self.update_window(img, overlays)
                 time.sleep(pause)
 
@@ -353,8 +362,10 @@ class Photobooth:
                 if action == Action.exit:
                     break
                 elif action == Action.photo or trigger:  # SPACE = direct photo
+                    camera.flash_on()
                     # take photo
                     img_full = camera.take_photo()
+                    camera.flash_off()
                     target = os.path.join(self.path_images, self.get_image_name())
                     cv2.imwrite(target, img_full)
                     last_snap_path = target
@@ -367,8 +378,10 @@ class Photobooth:
                 elif action == Action.interval:  # a - photo after 3 seconds
                     t0 = time.time()
                     timer_active = True
+                    camera.flash_on()
                 elif action == Action.gif:
                     self.log.info("Start GIF")
+                    camera.flash_on()
                     gif_buffer = GIFCreator(size=self.gif_length, pause=self.gif_pause)
                 elif action == Action.print_last_photo:
                     if last_snap_path is not None:
@@ -394,6 +407,7 @@ class Photobooth:
                 elif gif_buffer is not None:
                     gif_buffer.update(img)
                     if gif_buffer.is_full():
+                        camera.flash_off()
                         file_path = os.path.join(self.path_images, self.get_image_name("gif"))
                         file_path_thumb = os.path.join(self.path_thumbs, self.get_image_name("gif"))
                         self.log.info("GIF buffer full, save GIF to {}".format(file_path))
@@ -414,12 +428,21 @@ class Photobooth:
                     text = "{:d}".format(int(time_left))
                     overlay = font.render(text, 1, pygame.Color(255, 255, 255))
                     w, h = overlay.get_size()
-                    overlays.append((overlay, int(width/2.0 - w/2.0), int(height/2.0 - h/2.0)))
+                    overlays.append((overlay, int(width / 2.0 - w / 2.0), int(height / 2.0 - h / 2.0)))
                 elif gif_buffer is not None:
                     font = pygame.font.SysFont('freesans', 30, bold=True)
                     text = "GIF record..."
-                    overlay = font.render(text, 1, pygame.Color(128, 255, 255, 128))
-                    overlays.append((overlay, 0, 0))
+                    overlay_text = font.render(text, 1, pygame.Color(255, 0, 0, 128))
+                    overlay_box = pygame.Surface(self.screen.get_size(),
+                                                 flags=pygame.HWSURFACE | pygame.SRCALPHA)
+                    pygame.draw.rect(overlay_box, (255, 0, 0, 128),
+                                     pygame.Rect(0, 0,
+                                                 self.screen.get_size()[0],
+                                                 self.screen.get_size()[1]),
+                                     15)
+                    overlays.append((overlay_text, 10, 10))
+                    overlays.append((overlay_box, 0, 0))
+                    # cv2.rectangle(img_preview, (0, 0), (img_preview.shape[1], img_preview.shape[0]), (0, 0, 255), 5)
                 elif info:
                     self.log.debug("Show info text")
                     font = pygame.font.SysFont('freesans', 18, bold=True)
@@ -434,7 +457,7 @@ class Photobooth:
                         text = "0 fps"
                     overlay = font.render(text, 1, pygame.Color(255, 255, 255))
                     w, h = overlay.get_size()
-                    overlays.append((overlay, int(width-w), int(height-h)))
+                    overlays.append((overlay, int(width - w), int(height - h)))
 
                 # display image
                 self.update_window(img_preview, overlays)
@@ -599,6 +622,12 @@ class PhotoboothCam:
     def effect_disable(self):
         return None
 
+    def flash_on(self):
+        pass
+
+    def flash_off(self):
+        pass
+
 
 class RaspiboothCam(PhotoboothCam):
 
@@ -617,33 +646,54 @@ class RaspiboothCam(PhotoboothCam):
                         "colorswap", "washedout", "posterise", "cartoon")
         self.current_effect = 0
 
+        self.flash_pin = 13
+        self.flash_default = 40
+        self.flash_bright = 100
+        self.pwm = None
+
+        # setup flash pin PWM
+        import RPi.GPIO as GPIO
+        GPIO.setmode(GPIO.BCM)  # we are programming the GPIO by BCM pin numbers. (PIN35 as ‘GPIO19’)
+        GPIO.setup(self.flash_pin, GPIO.OUT)  # initialize GPIO19 as an output.
+        # GPIO.output(self.flash_pin, True)
+        self.pwm = GPIO.PWM(self.flash_pin, 100)  # GPIO19 as PWM output, with 100Hz frequency
+        self.pwm.start(self.flash_default)  # generate PWM signal with 40% duty cycle
+
     def init_camera(self):
         import picamera
-        self.log.info("Open PiCamera...")
-        self.camera = picamera.PiCamera(resolution=(1920, 1080))
-        self.camera.hflip = self.flip_h
-        self.camera.vflip = self.flip_v
-        self.camera.drc_strength = "off"
-        self.log.info(self.camera)
-        time.sleep(2.0)
+        # self.log.info("Open PiCamera...")
+        # self.camera = picamera.PiCamera(resolution=(1920, 1080))
+        # self.camera.hflip = self.flip_h
+        # self.camera.vflip = self.flip_v
+        # self.camera.drc_strength = "off"
+        # self.log.info(self.camera)
+        # time.sleep(2.0)
+        self.camera = cv2.VideoCapture(0)
         self.camera_thread = Thread(target=self.run)
         self.camera_thread.start()
         return True
 
     def close(self):
         self.log.info("close camera")
-        self.run_camera.set()
-        self.camera_thread.join()
-        self.camera.close()
+        # self.run_camera.set()
+        # self.camera_thread.join()
+        # self.camera.close()
+        self.camera.release()
 
     def run(self):
         from picamera.array import PiRGBArray
         # i = 0
         # raw_preview = PiRGBArray(self.camera, size=(800, 480))
-        img = np.empty((1088, 1920, 3), dtype=np.uint8)
+
         while not self.run_camera.is_set():
-            self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=0)
-            self.img = resize(img, width=800)
+            (grabbed, image) = self.camera.read()
+            self.img = image
+
+        # img = np.empty((1088, 1920, 3), dtype=np.uint8)
+        # while not self.run_camera.is_set():
+        #     self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=0)
+        #     self.img = resize(img, width=800)
+
         # this is much faster but stucks after some minutes
         # see: https://github.com/waveform80/picamera/issues/574
         # kernel 4.4 seems more stable
@@ -663,20 +713,33 @@ class RaspiboothCam(PhotoboothCam):
         #         break
         # stream.close()
 
+    def _read_img(self):
+        # (grabbed, image) = self.camera.read()
+        while self.img is None:
+            time.sleep(0.1)
+        image = np.array(self.img)
+        image = resize(image, width=self.preview_width)
+        if self.flip_h and self.flip_v:
+            image = cv2.flip(image, -1)
+        elif self.flip_h:
+            image = cv2.flip(image, 1)
+        elif self.flip_v:
+            image = cv2.flip(image, 0)
+        return image
+
     def take_preview_image(self):
         # img = np.empty((1088, 1920, 3), dtype=np.uint8)
         # self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
         # return self.img
 
-        while self.img is None:
-            self.log.warning("Waiting for preview image...")
-            time.sleep(0.1)
-        return self.img
+        # while self.img is None:
+        #     self.log.warning("Waiting for preview image...")
+        #     time.sleep(0.1)
+        return self._read_img()
 
     def take_photo(self):
-        img = np.empty((1088, 1920, 3), dtype=np.uint8)
-        self.camera.capture(img, 'bgr', use_video_port=True, splitter_port=1)
-        return img
+        image = self._read_img()
+        return image
 
     def effect_next(self):
         self.current_effect = (self.current_effect + 1) % len(self.effects)
@@ -692,6 +755,14 @@ class RaspiboothCam(PhotoboothCam):
         self.current_effect = 0
         self.camera.image_effect = self.effects[self.current_effect]
         return None
+
+    def flash_on(self):
+        if self.pwm is not None:
+            self.pwm.ChangeDutyCycle(self.flash_bright)
+
+    def flash_off(self):
+        if self.pwm is not None:
+            self.pwm.ChangeDutyCycle(self.flash_default)
 
 
 class GPhotoboothCam(PhotoboothCam):
