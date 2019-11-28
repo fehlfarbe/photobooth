@@ -303,6 +303,8 @@ class Photobooth:
             PhotoboothCam = RaspiboothCam
         elif self.cam_type == Camera.gphoto2:
             PhotoboothCam = GPhotoboothCam
+        else:
+            PhotoboothCam = PhotoboothDefaultCam
         camera = PhotoboothCam(verbose=self.verbose,
                                flip_h=self.flip_h,
                                flip_v=self.flip_v,
@@ -571,7 +573,7 @@ class Photobooth:
         cv2.imwrite(thumbnail_path, resized)
 
 
-class PhotoboothCam:
+class PhotoboothDefaultCam:
 
     def __init__(self, verbose=False, flip_h=False, flip_v=False, preview_width=800):
         self.flip_h = flip_h
@@ -583,6 +585,19 @@ class PhotoboothCam:
         self.log.setLevel(logging.DEBUG if verbose else logging.INFO)
 
         self.camera = None
+
+        self.flash_pin = 13
+        self.flash_default = 40
+        self.flash_bright = 100
+        self.pwm = None
+
+        # setup flash pin PWM
+        import RPi.GPIO as GPIO
+        GPIO.setmode(GPIO.BCM)  # we are programming the GPIO by BCM pin numbers. (PIN35 as ‘GPIO19’)
+        GPIO.setup(self.flash_pin, GPIO.OUT)  # initialize GPIO19 as an output.
+        # GPIO.output(self.flash_pin, True)
+        self.pwm = GPIO.PWM(self.flash_pin, 100)  # GPIO19 as PWM output, with 100Hz frequency
+        self.pwm.start(self.flash_default)  # generate PWM signal with 40% duty cycle
 
     def __del__(self):
         self.close()
@@ -607,6 +622,7 @@ class PhotoboothCam:
 
     def take_photo(self):
         img = self.camera.read()
+        self.log.debug(img.shape)
         if self.flip_h:
             img = cv2.flip(img, 1)
         if self.flip_v:
@@ -629,7 +645,7 @@ class PhotoboothCam:
         pass
 
 
-class RaspiboothCam(PhotoboothCam):
+class RaspiboothCam(PhotoboothDefaultCam):
 
     def __init__(self, *args, **kwargs):
         super(RaspiboothCam, self).__init__(*args, **kwargs)
@@ -638,8 +654,8 @@ class RaspiboothCam(PhotoboothCam):
         self.img = None
         self.camera = None
 
-        self.run_camera = Event()
-        self.camera_thread = None
+        # self.run_camera = Event()
+        # self.camera_thread = None
 
         self.effects = ("none", "negative", "solarize", "sketch",
                         "emboss", "oilpaint", "pastel", "watercolor", "film",
@@ -652,12 +668,13 @@ class RaspiboothCam(PhotoboothCam):
         self.pwm = None
 
         # setup flash pin PWM
-        import RPi.GPIO as GPIO
-        GPIO.setmode(GPIO.BCM)  # we are programming the GPIO by BCM pin numbers. (PIN35 as ‘GPIO19’)
-        GPIO.setup(self.flash_pin, GPIO.OUT)  # initialize GPIO19 as an output.
-        # GPIO.output(self.flash_pin, True)
-        self.pwm = GPIO.PWM(self.flash_pin, 100)  # GPIO19 as PWM output, with 100Hz frequency
-        self.pwm.start(self.flash_default)  # generate PWM signal with 40% duty cycle
+        self.flash = None
+        try:
+            import pigpio
+            self.flash = pigpio.pi()
+            self.flash.set_PWM_dutycycle(self.flash_pin, self.flash_default * (100/255.0))
+        except Exception as e:
+            self.log.error(e)
 
     def init_camera(self):
         import picamera
@@ -668,9 +685,12 @@ class RaspiboothCam(PhotoboothCam):
         # self.camera.drc_strength = "off"
         # self.log.info(self.camera)
         # time.sleep(2.0)
-        self.camera = cv2.VideoCapture(0)
-        self.camera_thread = Thread(target=self.run)
-        self.camera_thread.start()
+        # self.camera = cv2.VideoCapture(0)
+        # self.camera_thread = Thread(target=self.run)
+        # self.camera_thread.start()
+        self.camera = VideoStream(resolution=(1280, 720), usePiCamera=True)
+        self.camera.start()
+        time.sleep(2.0)
         return True
 
     def close(self):
@@ -678,7 +698,7 @@ class RaspiboothCam(PhotoboothCam):
         # self.run_camera.set()
         # self.camera_thread.join()
         # self.camera.close()
-        self.camera.release()
+        self.camera.stop()
 
     def run(self):
         from picamera.array import PiRGBArray
@@ -713,12 +733,17 @@ class RaspiboothCam(PhotoboothCam):
         #         break
         # stream.close()
 
-    def _read_img(self):
+    def _read_img(self, preview=False):
         # (grabbed, image) = self.camera.read()
-        while self.img is None:
+        # while self.img is None:
+        #     time.sleep(0.1)
+        # image = np.array(self.img)
+        image = self.camera.read()
+        while image is None:
             time.sleep(0.1)
-        image = np.array(self.img)
-        image = resize(image, width=self.preview_width)
+            image = self.camera.read()
+        if preview:
+            image = resize(image, width=self.preview_width)
         if self.flip_h and self.flip_v:
             image = cv2.flip(image, -1)
         elif self.flip_h:
@@ -735,10 +760,11 @@ class RaspiboothCam(PhotoboothCam):
         # while self.img is None:
         #     self.log.warning("Waiting for preview image...")
         #     time.sleep(0.1)
-        return self._read_img()
+        return self._read_img(preview=True)
 
     def take_photo(self):
         image = self._read_img()
+        self.log.debug(image.shape)
         return image
 
     def effect_next(self):
@@ -757,15 +783,15 @@ class RaspiboothCam(PhotoboothCam):
         return None
 
     def flash_on(self):
-        if self.pwm is not None:
-            self.pwm.ChangeDutyCycle(self.flash_bright)
+        if self.flash:
+            self.flash.set_PWM_dutycycle(self.flash_pin, 255)
 
     def flash_off(self):
-        if self.pwm is not None:
-            self.pwm.ChangeDutyCycle(self.flash_default)
+        if self.flash:
+            self.flash.set_PWM_dutycycle(self.flash_pin, self.flash_default * (100 / 255.0))
 
 
-class GPhotoboothCam(PhotoboothCam):
+class GPhotoboothCam(PhotoboothDefaultCam):
 
     def __init__(self, *args, **kwargs):
         super(GPhotoboothCam, self).__init__(*args, **kwargs)

@@ -1,6 +1,9 @@
+import os
 import cv2
+import shutil
 import imageio
 import time
+import tempfile
 from threading import Thread
 
 
@@ -33,10 +36,15 @@ class GIFCreator:
 
     def _save(self, path):
         # imageio.mimsave(path, self._image_buffer)
-        with imageio.get_writer(path, mode='I') as writer:
+        # tmpfile = os.path.join(tempfile.gettempdir(), os.path.basename(path))
+        tmpfile = tempfile.NamedTemporaryFile()
+        tmpfile.name = tmpfile.name + ".gif"
+        print("writing GIF to {}".format(tmpfile.name))
+        with imageio.get_writer(tmpfile.name, mode='I', duration=len(self._image_buffer)/20.0) as writer:
             for img in self._image_buffer:
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 writer.append_data(img_rgb)
+        shutil.move(tmpfile.name, path)
 
     @property
     def images(self):

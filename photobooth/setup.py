@@ -10,6 +10,7 @@ setup(name='photobooth',
                         'flask',
                         'gevent',
                         'pygame',
-                        'imageio'
+                        'imageio',
+                        'pigpio'
                         ]
       )

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<main>
+	<div class="slideshow">
+        <img id="image" src="" alt="slideshow_image">
+        <div class="progress">
+          <div class="progress-bar" role="progressbar" style="width: 25%"></div>
+        </div>
+	</div>
+</main>
+
+<script type="text/javascript">
+	var images = [];
+
+	let searchParams = new URLSearchParams(window.location.search);
+	let interval_slide = 5000;
+	if(searchParams.has("islide")){
+	    interval_slide = parseInt(searchParams.get("islide")) * 1000;
+    }
+
+    carousel();
+    updateImages();
+
+    function carousel() {
+      let image = images[Math.floor(Math.random()*images.length)];
+      console.log("New image: ", image);
+      $("#image").attr("src", "/image/" + image);
+      if(!image){
+          setTimeout(carousel, 100);
+      } else {
+          setTimeout(carousel, interval_slide);
+      }
+
+      $(".progress-bar").finish();
+      $(".progress-bar").css({"width":"0%"});
+      $(".progress-bar").animate({
+            width: "100%"
+      }, interval_slide);
+    }
+
+    // update image list ever 10 seconds
+    function updateImages() {
+        $.get( "/api/v1/images", function( data ) {
+            images = data;
+            setTimeout(updateImages, 10000);
+        });
+    }
+</script>
+
+{% endblock %}
