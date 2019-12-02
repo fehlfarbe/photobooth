@@ -1,4 +1,5 @@
 import argparse
+import time
 from photobooth.photobooth import Photobooth, Camera
 
 
@@ -31,7 +32,12 @@ if __name__ == "__main__":
     if not args.server_only:
         pb.preview(block=True)
     else:
-        pb.run_server()
+        # pb.run_server()
+        while True:
+            try:
+                time.sleep(3)
+            except KeyboardInterrupt as e:
+                break
 
     # cleanup
     pb.close()

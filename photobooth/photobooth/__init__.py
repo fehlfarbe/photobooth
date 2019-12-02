@@ -592,12 +592,16 @@ class PhotoboothDefaultCam:
         self.pwm = None
 
         # setup flash pin PWM
-        import RPi.GPIO as GPIO
-        GPIO.setmode(GPIO.BCM)  # we are programming the GPIO by BCM pin numbers. (PIN35 as ‘GPIO19’)
-        GPIO.setup(self.flash_pin, GPIO.OUT)  # initialize GPIO19 as an output.
-        # GPIO.output(self.flash_pin, True)
-        self.pwm = GPIO.PWM(self.flash_pin, 100)  # GPIO19 as PWM output, with 100Hz frequency
-        self.pwm.start(self.flash_default)  # generate PWM signal with 40% duty cycle
+        try:
+            import RPi.GPIO as GPIO
+            GPIO.setmode(GPIO.BCM)  # we are programming the GPIO by BCM pin numbers. (PIN35 as ‘GPIO19’)
+            GPIO.setup(self.flash_pin, GPIO.OUT)  # initialize GPIO19 as an output.
+            # GPIO.output(self.flash_pin, True)
+            self.pwm = GPIO.PWM(self.flash_pin, 100)  # GPIO19 as PWM output, with 100Hz frequency
+            self.pwm.start(self.flash_default)  # generate PWM signal with 40% duty cycle
+        except ModuleNotFoundError as e:
+            self.log.error(e)
+            pass
 
     def __del__(self):
         self.close()
