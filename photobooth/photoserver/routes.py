@@ -84,4 +84,4 @@ def api_all_images():
 
 @app.errorhandler(404)
 def page_not_found(e):
-    return index(1)
+    return url_for("/index")

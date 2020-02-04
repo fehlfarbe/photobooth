@@ -20,10 +20,13 @@
 	    interval_slide = parseInt(searchParams.get("islide")) * 1000;
     }
 
+	// start carousel and update images
     carousel();
     updateImages();
 
     function carousel() {
+      if(!images){
+          setTimeout(carousel, 100);      }
       let image = images[Math.floor(Math.random()*images.length)];
       console.log("New image: ", image);
       $("#image").attr("src", "/image/" + image);
