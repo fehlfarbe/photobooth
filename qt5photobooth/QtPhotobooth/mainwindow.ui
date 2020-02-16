@@ -93,7 +93,7 @@
           <item>
            <widget class="VideoView" name="viewfinder" native="true">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
@@ -108,27 +108,99 @@
              <bool>false</bool>
             </property>
             <property name="styleSheet">
-             <string notr="true">background-color: #000;
-transform: scaleY(-1);</string>
+             <string notr="true">background-color: #000;</string>
             </property>
+            <layout class="QVBoxLayout" name="verticalLayout_4">
+             <property name="spacing">
+              <number>0</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QCountdownLabel" name="viewfinderLabel">
+               <property name="enabled">
+                <bool>true</bool>
+               </property>
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                 <horstretch>0</horstretch>
+                 <verstretch>0</verstretch>
+                </sizepolicy>
+               </property>
+               <property name="font">
+                <font>
+                 <pointsize>30</pointsize>
+                 <weight>75</weight>
+                 <bold>true</bold>
+                </font>
+               </property>
+               <property name="autoFillBackground">
+                <bool>false</bool>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">color: #fff;
+background-color: transparent;</string>
+               </property>
+               <property name="text">
+                <string>CHEESE!</string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignCenter</set>
+               </property>
+              </widget>
+             </item>
+            </layout>
            </widget>
           </item>
          </layout>
         </widget>
         <widget class="QWidget" name="previewPage">
-         <widget class="QLabel" name="preview">
-          <property name="geometry">
-           <rect>
-            <x>170</x>
-            <y>146</y>
-            <width>421</width>
-            <height>161</height>
-           </rect>
+         <layout class="QVBoxLayout" name="verticalLayout_3">
+          <property name="spacing">
+           <number>0</number>
           </property>
-          <property name="text">
-           <string>TextLabel</string>
+          <property name="leftMargin">
+           <number>0</number>
           </property>
-         </widget>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QPreviewFrame" name="preview">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="autoFillBackground">
+             <bool>false</bool>
+            </property>
+            <property name="text">
+             <string>PREVIEW</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </widget>
       </item>
@@ -144,6 +216,16 @@ transform: scaleY(-1);</string>
    <extends>QWidget</extends>
    <header>videoview.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>QCountdownLabel</class>
+   <extends>QLabel</extends>
+   <header>qcountdownlabel.h</header>
+  </customwidget>
+  <customwidget>
+   <class>QPreviewFrame</class>
+   <extends>QLabel</extends>
+   <header>qpreviewframe.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

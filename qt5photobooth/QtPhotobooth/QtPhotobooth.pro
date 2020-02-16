@@ -29,14 +29,21 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
         main.cpp \
         mainwindow.cpp \
-    videoview.cpp
+    videoview.cpp \
+    qcountdownlabel.cpp \
+    qpreviewframe.cpp
 
 HEADERS += \
         mainwindow.h \
-    videoview.h
+    videoview.h \
+    qcountdownlabel.h \
+    qpreviewframe.h
 
 FORMS += \
         mainwindow.ui
 
 target.path = /home/pi/
 INSTALLS += target
+
+RESOURCES += \
+    res.qrc

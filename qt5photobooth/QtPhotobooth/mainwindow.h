@@ -5,16 +5,24 @@
 #include <QCameraImageCapture>
 #include <QMediaRecorder>
 #include <QScopedPointer>
-
+#include <QDir>
 #include <QMainWindow>
+#include <QThread>
+#include <QtConcurrent/QtConcurrent>
 #include <pigpiod_if2.h>
 #include <functional>
+#include <future>
+
 
 enum BUTTONS {
     INFO = 21,
     PHOTO = 20,
     GIF = 19,
     PRINT = 18
+};
+
+enum OUTPUTS {
+    FLASH = 13
 };
 
 namespace Ui {
@@ -38,7 +46,6 @@ private slots:
     void record();
     void pause();
     void stop();
-    void setMuted(bool);
 
     void toggleLock();
     void takeImage();
@@ -66,8 +73,24 @@ private slots:
     void displayViewfinder();
     void displayCapturedImage();
 
-    void readyForCapture(bool ready);
+    void imageCaptured(int id, const QImage &preview);
     void imageSaved(int id, const QString &fileName);
+
+    // actions for key/buttons
+    void actionPhoto();
+    void actionGIF();
+    void actionPrint();
+    void countDownLabel();
+
+    // flash
+    void flash(bool);
+
+signals:
+    void onCountdown();
+    void onActionPhoto();
+    void onActionGIF();
+    void onActionPrint();
+    void onFlash(bool);
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -86,10 +109,29 @@ private:
     QVideoEncoderSettings m_videoSettings;
     QString m_videoContainerFormat;
     bool m_isCapturingImage = false;
+    bool m_isCapturingGIF = false;
     bool m_applicationExiting = false;
 
+    std::vector<QImage> m_gif_buffer;
+
+    QThread m_worker;
+
+    // buttons
+    int m_pi;
     uint32_t m_last_tick = 0;
     uint32_t m_bounce_ticks = 1000000;
+
+    // settings
+    const int m_countdown_ms = 4000;
+    const float m_font_mult = 400;
+    QDir m_image_path;
+    int m_gif_length_ms = 1000;
+    int m_gif_images = 5;
+    bool flip_h = true;
+    bool flip_v = true;
+
+    char m_flash_default = 100;
+    char m_flash_on = 255;
 };
 
 #endif // MAINWINDOW_H
