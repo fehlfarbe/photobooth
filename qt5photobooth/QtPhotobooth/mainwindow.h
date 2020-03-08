@@ -8,22 +8,23 @@
 #include <QDir>
 #include <QMainWindow>
 #include <QThread>
+#include <QSettings>
 #include <QtConcurrent/QtConcurrent>
 #include <pigpiod_if2.h>
 #include <functional>
 #include <future>
 
 
-enum BUTTONS {
-    INFO = 21,
-    PHOTO = 20,
-    GIF = 19,
-    PRINT = 18
-};
+//enum BUTTONS {
+//    INFO = 21,
+//    PHOTO = 20,
+//    GIF = 19,
+//    PRINT = 16
+//};
 
-enum OUTPUTS {
-    FLASH = 13
-};
+//enum OUTPUTS {
+//    FLASH = 13
+//};
 
 namespace Ui {
 class MainWindow;
@@ -96,6 +97,9 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void saveGIF(std::vector<QImage>& images, float fps);
+    int getGPIO(QString name);
+    QVariant readSettings(QString group, QString key, QVariant val_default);
 
 private:
     Ui::MainWindow *ui;
@@ -113,8 +117,7 @@ private:
     bool m_applicationExiting = false;
 
     std::vector<QImage> m_gif_buffer;
-
-    QThread m_worker;
+    QString m_last_image;
 
     // buttons
     int m_pi;
@@ -122,16 +125,18 @@ private:
     uint32_t m_bounce_ticks = 1000000;
 
     // settings
-    const int m_countdown_ms = 4000;
+    QSettings* m_settings;
+//    const int m_countdown_ms = 4000;
     const float m_font_mult = 400;
-    QDir m_image_path;
-    int m_gif_length_ms = 1000;
-    int m_gif_images = 5;
-    bool flip_h = true;
-    bool flip_v = true;
+//    QDir m_image_path;
+//    int m_gif_length_ms = 1000;
+//    int m_gif_images = 5;
+//    float m_gif_fps = 3.0;
+//    bool flip_h = true;
+//    bool flip_v = true;
 
-    char m_flash_default = 100;
-    char m_flash_on = 255;
+//    char m_flash_default = 100;
+//    char m_flash_on = 255;
 };
 
 #endif // MAINWINDOW_H

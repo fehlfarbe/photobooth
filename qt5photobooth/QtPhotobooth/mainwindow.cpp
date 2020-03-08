@@ -9,6 +9,7 @@
 #include <QMediaMetaData>
 #include <QVideoRendererControl>
 #include <QVideoSurfaceFormat>
+#include <QTemporaryDir>
 
 #include <QMessageBox>
 #include <QPalette>
@@ -33,8 +34,14 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->viewfinderLabel->setVisible(false);
     ui->stackedWidget->setCurrentIndex(0);
 
-    // settings
-    m_image_path.setPath("/home/pi/images");
+    // load settings
+    QFile checkSettings("settings.ini");
+    if(!checkSettings.exists()){
+        qDebug() << "No settings file at " << checkSettings.fileName() << " found";
+        this->close();
+        return;
+    }
+    m_settings = new QSettings(checkSettings.fileName(), QSettings::Format::IniFormat);
 
     //Camera devices:
     QActionGroup *videoDevicesGroup = new QActionGroup(this);
@@ -43,7 +50,6 @@ MainWindow::MainWindow(QWidget *parent) :
     for (const QCameraInfo &cameraInfo : availableCameras) {
         qDebug() << cameraInfo.deviceName();
     }
-
     qDebug() << "default camera: " << QCameraInfo::defaultCamera();
 
 //    connect(videoDevicesGroup, &QActionGroup::triggered, this, &MainWindow::updateCameraDevice);
@@ -60,24 +66,38 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // init GPIO
     m_pi = pigpio_start(nullptr, nullptr);
-    for(size_t i=0; i<30; i++){
-        switch (i) {
-        case BUTTONS::INFO:
-        case BUTTONS::PHOTO:
-        case BUTTONS::GIF:
-        case BUTTONS::PRINT:
-            set_mode(m_pi, i, PI_INPUT);
-            set_pull_up_down(m_pi, i, PI_PUD_UP);
-            callback_ex(m_pi, i, FALLING_EDGE, &gpiocallback, this);
-            break;
-        case OUTPUTS::FLASH:
-            set_mode(m_pi, i, PI_OUTPUT);
-            set_PWM_dutycycle(m_pi, i, 100);
-            break;
-        default:
-            break;
-        }
+//    for(size_t i=0; i<30; i++){
+//        switch (i) {
+//        case BUTTONS::INFO:
+//        case BUTTONS::PHOTO:
+//        case BUTTONS::GIF:
+//        case BUTTONS::PRINT:
+//            set_mode(m_pi, i, PI_INPUT);
+//            set_pull_up_down(m_pi, i, PI_PUD_UP);
+//            callback_ex(m_pi, i, FALLING_EDGE, &gpiocallback, this);
+//            break;
+//        case OUTPUTS::FLASH:
+//            set_mode(m_pi, i, PI_OUTPUT);
+//            set_PWM_dutycycle(m_pi, i, 100);
+//            break;
+//        default:
+//            break;
+//        }
+//    }
+
+    // setup buttons
+    const QStringList buttons {"info", "photo", "gif", "print"};
+    for(auto& key : buttons){
+        int i = getGPIO(key);
+        set_mode(m_pi, i, PI_INPUT);
+        set_pull_up_down(m_pi, i, PI_PUD_UP);
+        callback_ex(m_pi, i, FALLING_EDGE, &gpiocallback, this);
     }
+
+    // setup flash
+    int flash = getGPIO("flash");
+    set_mode(m_pi, flash, PI_OUTPUT);
+    set_PWM_dutycycle(m_pi, flash, readSettings("main", "flash_default", 100).toInt());
 }
 
 MainWindow::~MainWindow()
@@ -108,9 +128,9 @@ void MainWindow::setCamera(const QCameraInfo &cameraInfo)
     m_mediaRecorder->setMetaData(QMediaMetaData::Title, QVariant(QLatin1String("Photobooth")));
 //    m_mediaRecorder->setContainerFormat("mp4");
 //    m_mediaRecorder->setVideoSettings(vid);
-    qDebug() << "supported containers: " << m_mediaRecorder->supportedContainers();
-    qDebug() << "supported fps: " << m_mediaRecorder->supportedFrameRates();
-    qDebug() << "supported codecs: " << m_mediaRecorder->supportedVideoCodecs();
+//    qDebug() << "supported containers: " << m_mediaRecorder->supportedContainers();
+//    qDebug() << "supported fps: " << m_mediaRecorder->supportedFrameRates();
+//    qDebug() << "supported codecs: " << m_mediaRecorder->supportedVideoCodecs();
     m_mediaRecorder->setMuted(true);
     m_videoContainerFormat.append("video/webm");
     m_videoSettings.setCodec("video/x-vp8") ;
@@ -151,7 +171,10 @@ void MainWindow::setCamera(const QCameraInfo &cameraInfo)
 //    ui->captureWidget->setTabEnabled(1, (m_camera->isCaptureModeSupported(QCamera::CaptureVideo)));
 
     // V4L settings
-    QString args(QString("v4l2-ctl --set-ctrl=horizontal_flip=") + QString::number(flip_h) + " --set-ctrl=vertical_flip=" + QString::number(flip_v));
+    QString args(QString("v4l2-ctl --set-ctrl=horizontal_flip=")
+                 + QString::number(readSettings("main", "flip_h", false).toBool())
+                 + " --set-ctrl=vertical_flip="
+                 + QString::number(readSettings("main", "flip_v", false).toBool()));
     QProcess::execute(args);
 
 //    updateCaptureMode();
@@ -219,7 +242,7 @@ void MainWindow::actionPhoto(){
 
     emit onCountdown();
     emit onFlash(true);
-    QTimer::singleShot(m_countdown_ms, this, &MainWindow::takeImage);
+    QTimer::singleShot(readSettings("main", "countdown", 3000).toInt(), this, &MainWindow::takeImage);
 }
 
 void MainWindow::actionGIF(){
@@ -229,15 +252,45 @@ void MainWindow::actionGIF(){
     qDebug() << "start countdown and take GIF";
     emit onCountdown();
     emit onFlash(true);
-    QTimer::singleShot(m_countdown_ms, this, &MainWindow::record);
+    QTimer::singleShot(readSettings("main", "countdown", 3000).toInt(), this, &MainWindow::record);
 }
 
 void MainWindow::actionPrint(){
-    qDebug() << "printing last photo";
+    if(m_last_image.isEmpty()){
+        qDebug() << "no image to print...";
+        return;
+    }
+
+    // check if print is already running
+    QProcess process;
+    process.start("lpstat");
+    process.waitForFinished();
+    QString output = process.readAllStandardOutput();
+    qDebug() << output;
+    if(output.size() > 0){
+        qDebug() << "Printer is still printing...";
+        return;
+    }
+
+    qDebug() << "printing last photo: " << m_last_image;
+
+    // copy last image to temporary directory so it can't be deleted and modified
+//    QTemporaryDir path("/dev/shm/");
+    QString tmp = "/dev/shm/print.jpg";
+    QFile::copy(m_last_image, tmp);
+
+    // flip image
+    if(readSettings("main", "printer_flip_v", false).toBool()){
+        qDebug() << "flip image before printing";
+        QImage img(tmp);
+        img = img.mirrored(false, true);
+        img.save(tmp);
+    }
+    QProcess::startDetached(QString("lpr -o fit-to-page %1").arg(tmp));
 }
 
 void MainWindow::countDownLabel(){
-    ui->viewfinderLabel->startCountdown(m_countdown_ms);
+    ui->viewfinderLabel->startCountdown(readSettings("main", "countdown", 3000).toInt());
 }
 
 void MainWindow::updateRecordTime()
@@ -248,17 +301,28 @@ void MainWindow::updateRecordTime()
 void MainWindow::processCapturedImage(int requestId, const QImage& img)
 {
     if(m_isCapturingGIF){
-        m_gif_buffer.push_back(img);;
-        if(m_gif_buffer.size() >= m_gif_images){
+        m_gif_buffer.push_back(img);
+        if(m_gif_buffer.size() >= readSettings("main", "gif_frames", 3).toInt()){
             qDebug() << "GIF buffer full";
             m_isCapturingGIF = false;
-            qDebug() << "ToDo: save and show GIF buffer";
-            // clear GIF buffer
             emit onFlash(false);
+            qDebug() << "save and show GIF buffer";
+//            saveGIF(m_gif_buffer, 3.0);
+            QtConcurrent::run(this, &MainWindow::saveGIF, std::move(m_gif_buffer), readSettings("main", "gif_fps", 3).toFloat());
+            // show GIF
+            for(auto& img : m_gif_buffer){
+                img = img.scaled(ui->viewfinder->size(),
+                                 Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation);
+            }
+            ui->preview->setPreview(m_gif_buffer);
+            displayCapturedImage();
+            QTimer::singleShot(8000, this, &MainWindow::displayViewfinder);
+            // clear GIF buffer
             m_gif_buffer.clear();
         } else {
-            qDebug() << "take next GIF frame in " << m_gif_length_ms << "ms";
-            QTimer::singleShot(m_gif_length_ms, this, &MainWindow::takeImage);
+            qDebug() << "take next GIF frame in " << readSettings("main", "gif_pause", 1000).toInt() << "ms";
+            QTimer::singleShot(readSettings("main", "gif_pause", 1000).toInt(), this, &MainWindow::takeImage);
         }
     } else {
         Q_UNUSED(requestId);
@@ -441,10 +505,13 @@ void MainWindow::displayCapturedImage()
 }
 
 void MainWindow::imageCaptured(int id, const QImage &preview){
+    if(m_isCapturingGIF){
+        return;
+    }
     qDebug() << "got image with ID " << id;
     QString full, thumb;
     full.asprintf("image_%05d.jpg", id);
-    QString full_path = m_image_path.absoluteFilePath("images/" + full);
+    QString full_path = readSettings("main", "image_dir", "~").toString() + full;
     preview.save(full_path);
 }
 
@@ -452,7 +519,7 @@ void MainWindow::imageSaved(int id, const QString &fileName)
 {
     Q_UNUSED(id);
     qDebug() << "saved image to " << fileName;
-//    ui->statusbar->showMessage(tr("Captured \"%1\"").arg(QDir::toNativeSeparators(fileName)));
+    m_last_image = fileName;
 
     m_isCapturingImage = false;
     if (m_applicationExiting)
@@ -471,28 +538,58 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 }
 
+void MainWindow::saveGIF(std::vector<QImage> &images, float fps)
+{
+    // save all images to temporary memory
+    QTemporaryDir path("/dev/shm/");
+    for(size_t i=0; i<images.size(); i++){
+        QString filename = path.filePath(QString("%1").arg(i, 2, 10, QChar('0')) + ".jpg");
+        qDebug() << "Saving to " << filename;
+        images[i].save(filename);
+    }
+
+    // create animated GIF with ffmpeg
+    QString args(QString("ffmpeg -r %3 -i %1/%2 -c:v libvpx -vf \"scale=800:-1\" -crf 10 -b:v 1M %4/%5.webm").arg(
+                     path.path(),
+                     "%02d.jpg",
+                     QString::number(fps),
+                     readSettings("main", "image_dir", "~").toString(),
+                     QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss")));
+    qDebug() << args;
+    QProcess::execute(args);
+}
+
+int MainWindow::getGPIO(QString name)
+{
+    return readSettings("gpio", name, -1).toInt();
+}
+
+QVariant MainWindow::readSettings(QString group, QString key, QVariant val_default)
+{
+    m_settings->beginGroup(group);
+    qDebug() << "readSettings: " << m_settings->group() << " " << m_settings->childKeys();
+    QVariant value = m_settings->value(key, val_default);
+    m_settings->endGroup();
+    return value;
+}
+
 void MainWindow::pressedGPIO(int pi, unsigned user_gpio, unsigned level, uint32_t tick){
 //    qDebug() << "last " << m_last_tick << endl << " tick " << tick << endl << " diff " << (tick-m_last_tick);
     if(tick-m_last_tick > m_bounce_ticks){
         m_last_tick = tick;
-
-        switch (user_gpio) {
-        case BUTTONS::PHOTO:
+        if(user_gpio == getGPIO("photo")){
             emit onActionPhoto();
-            break;
-        case BUTTONS::GIF:
+        } else if(user_gpio == getGPIO("gif")){
             emit onActionGIF();
-            break;
-        case BUTTONS::PRINT:
+        } else if(user_gpio == getGPIO("print")){
             emit onActionPrint();
-            break;
-        default:
+        } else {
             qDebug() << "No handler for GPIO " << user_gpio;
-            break;
         }
     }
 }
 
 void MainWindow::flash(bool on){
-    set_PWM_dutycycle(m_pi, OUTPUTS::FLASH, on ? m_flash_on : m_flash_default);
+    set_PWM_dutycycle(m_pi, getGPIO("flash"),
+                      on ? readSettings("main", "flash_on", 255).toInt() : readSettings("main", "flash_default", 100).toInt());
 }

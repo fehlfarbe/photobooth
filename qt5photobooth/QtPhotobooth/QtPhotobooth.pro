@@ -42,8 +42,17 @@ HEADERS += \
 FORMS += \
         mainwindow.ui
 
-target.path = /home/pi/
-INSTALLS += target
 
 RESOURCES += \
     res.qrc
+
+DISTFILES += \
+    settings.ini
+
+target.path = /home/pi/
+conf.files = settings.ini
+conf.path = /home/pi/
+
+
+!isEmpty(target.path): INSTALLS += target
+!isEmpty(conf.path): INSTALLS += conf
